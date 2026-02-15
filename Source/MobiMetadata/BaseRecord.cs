@@ -1,19 +1,10 @@
-﻿namespace MobiMetadata
+namespace MobiMetadata;
+
+public class BaseRecord(Memory<byte> data, int position)
 {
-    public class BaseRecord
-    {
-        private readonly int _recordPosition;
+    private readonly int _position = position;
+    private readonly Memory<byte> _data = data;
 
-        public BaseRecord(Memory<byte> recordsData, int recordPosition)
-        {
-            RecordsData = recordsData;
-            _recordPosition = recordPosition;
-        }
-
-        private Memory<byte> RecordsData { get; set; }
-
-        protected Memory<byte> GetPropertyData(int pos, int len) => RecordsData.Slice(_recordPosition + pos, len);
-
-        protected uint GetPropertyDataAsUint(int pos, int len) => Converter.ToUInt32(GetPropertyData(pos, len).Span);
-    }
+    protected Memory<byte> GetData(int offset, int length) => _data.Slice(_position + offset, length);
+    protected uint GetUint(int offset, int length) => Converter.ToUInt32(GetData(offset, length).Span);
 }

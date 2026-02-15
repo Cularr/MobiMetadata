@@ -1,189 +1,224 @@
-﻿namespace MobiMetadata
+namespace MobiMetadata;
+
+public class PageRecords
 {
-    public class PageRecords
+    private List<PageRecord> _records = [];
+    private List<PageRecord> _images = [];
+    private List<PageRecord> _rest = [];
+    private List<PageRecord> _fonts = [];
+
+    private readonly SemaphoreSlim _semaphore = new(1, 1);
+
+    public IReadOnlyList<PageRecord> Images => _images;
+    public IReadOnlyList<PageRecord> Rest => _rest;
+    public IReadOnlyList<PageRecord> Fonts => _fonts;
+    public PageRecord? Cover { get; private set; }
+    public PageRecord? Thumbnail { get; private set; }
+    public PageRecord? Datp { get; private set; }
+    public PageRecord? KindleEmbed { get; private set; }
+    public RescRecord? Resc { get; private set; }
+
+    public PageRecords(
+        Stream stream,
+        PDBRecordInfo[] pdbRecords,
+        int dataOffset,
+        uint firstImageIndex,
+        ushort lastImageIndex,
+        uint coverOffset,
+        uint thumbOffset)
     {
-        private readonly List<PageRecord> _allRecords;
+        var safeLastIndex = Math.Min(lastImageIndex, (ushort)(pdbRecords.Length - 2));
+        var coverIndex = firstImageIndex + coverOffset;
+        var thumbIndex = firstImageIndex + thumbOffset;
 
-        public List<PageRecord> ImageRecords { get; set; }
-
-        public List<PageRecord> RestOfRecords { get; set; }
-
-        public ImageType ImageType { get; private set; }
-
-        public PageRecord? CoverRecord { get; private set; }
-
-        public PageRecord? ThumbImage { get; private set; }
-
-        public PageRecord? DatpRecord { get; set; }
-
-        public PageRecord? Len1992Record { get; set; }
-
-        public RescRecord RescRecord { get; set; }
-
-        public List<PageRecord> FontRecords { get; set; }
-
-        // Special record for the HD image container.
-
-        public PageRecord? KindleEmbedRecord { get; set; }
-
-        public PageRecords(Stream stream, PDBRecordInfo[] pdbRecords, ImageType imageType, uint firstImageIndex, ushort lastImageIndex,
-            uint coverIndexOffset, uint thumbIndexOffset)
+        for (var i = firstImageIndex; i < safeLastIndex; i++)
         {
-            ImageType = imageType;
+            var record = pdbRecords[i];
+            var nextRecord = pdbRecords[i + 1];
+            var recordOffset = record.DataOffset;
+            var length = (uint)(nextRecord.DataOffset - recordOffset);
 
-            CoverRecord = null;
-            ThumbImage = null;
+            var pageRecord = new PageRecord(stream, recordOffset, length, dataOffset, _semaphore);
 
-            var coverIndex = firstImageIndex + coverIndexOffset;
-            var thumbIndex = firstImageIndex + thumbIndexOffset;
-
-            // If lastImageIndex is invalid grab as many records as we can and let the analyzer sort it out.
-            // This fixes a few cases of out of bounds exceptions indexing into pdbRecords.
-            var nextToLastIndex = pdbRecords.Length - 2;
-            if (lastImageIndex > nextToLastIndex)
+            if (coverOffset > 0 && i == coverIndex)
             {
-                lastImageIndex = (ushort)nextToLastIndex;
+                Cover = pageRecord;
             }
-
-            _allRecords = new List<PageRecord>();
-            for (var index = firstImageIndex; index < lastImageIndex; index++)
+            else if (thumbOffset > 0 && i == thumbIndex)
             {
-                var pdbRecord = pdbRecords[index];
-
-                var next = index + 1;
-                var nextRecord = pdbRecords[next];
-
-                var dataOffset = pdbRecord.RecordDataOffset;
-                var nextRecordOffset = nextRecord.RecordDataOffset;
-
-                PageRecord pageRecord;
-                if (imageType == ImageType.SD)
-                {
-                    pageRecord = new PageRecord(stream, dataOffset, nextRecordOffset - dataOffset);
-                }
-                else
-                {
-                    pageRecord = new PageRecordHD(stream, dataOffset, nextRecordOffset - dataOffset);
-                }
-
-                if (coverIndexOffset > 0 && index == coverIndex)
-                {
-                    CoverRecord = pageRecord;
-                }
-                else if (thumbIndexOffset > 0 && index == thumbIndex)
-                {
-                    ThumbImage = pageRecord;
-                }
-                else
-                {
-                    _allRecords.Add(pageRecord);
-                }
-            }
-        }
-
-        public async Task AnalyzePageRecordsAsync()
-        {
-            // Search backwards for the RESC record 
-            var rescIndex = _allRecords.Count - 1;
-            for (; rescIndex >= 0; rescIndex--)
-            {
-                var record = _allRecords[rescIndex];
-
-                var rescRecord = await record.GetRescRecordAsync().ConfigureAwait(false);
-                if (rescRecord != null)
-                {
-                    await rescRecord.ParseXmlAsync().ConfigureAwait(false);
-                    RescRecord = rescRecord;
-
-                    break;
-                }
-            }
-            if (RescRecord == null)
-            {
-                throw new MobiMetadataException($"Found no {nameof(RescRecord)}");
-            }
-            _allRecords.RemoveAt(rescIndex);
-
-            // Pagecount fixup for some manga books
-            if (_allRecords.Count == RescRecord.PageCount)
-            {
-                var lastRecord = _allRecords.Count - 1;
-                if (await _allRecords[lastRecord].IsDatpRecordAsync().ConfigureAwait(false))
-                {
-                    _allRecords.RemoveAt(lastRecord);
-                    RescRecord.AdjustPageCountBy(-1);
-                }
-            }
-
-            // If we have more records than pagecount filter out the known types
-            if (_allRecords.Count > RescRecord.PageCount)
-            {
-                var restOfRecords = _allRecords.Skip(RescRecord.PageCount).ToList();
-
-                for (int i = 0, sz = restOfRecords.Count; i < sz; i++)
-                {
-                    var record = restOfRecords[i];
-
-                    // The DATP record
-                    if (await record.IsDatpRecordAsync().ConfigureAwait(false))
-                    {
-                        DatpRecord = record;
-                        restOfRecords[i] = null;
-                    }
-                    // The 1992 bytes image
-                    else if (record.IsLen1992Record())
-                    {
-                        Len1992Record = record;
-                        restOfRecords[i] = null;
-                    }
-                }
-
-                // Set the "real" rest and the content records
-                RestOfRecords = restOfRecords.Where(record => record != null).ToList();
-                ImageRecords = _allRecords.Take(RescRecord.PageCount).ToList();
+                Thumbnail = pageRecord;
             }
             else
             {
-                ImageRecords = _allRecords;
-            }
-
-            if (ImageRecords.Count < RescRecord.PageCount)
-            {
-                throw new MobiMetadataException($"{nameof(ImageRecords)} {ImageRecords.Count} < {nameof(RescRecord.PageCount)} {RescRecord.PageCount}");
+                _records.Add(pageRecord);
             }
         }
+    }
 
-        public async Task AnalyzeHdContainerRecordsAsync(int pageCount)
+    public async Task AnalyzeAsync()
+    {
+        var (rescIndex, resc) = await FindRescIndexAsync();
+
+        if (rescIndex == -1 || resc == null)
         {
-            if (_allRecords.Count > pageCount)
+            _images = [.. _records];
+            return;
+        }
+
+        Resc = resc;
+        await resc.ParseAsync().ConfigureAwait(false);
+        _records.RemoveAt(rescIndex);
+
+        await RemoveDatpFromEndIfNeededAsync(resc).ConfigureAwait(false);
+
+        if (_records.Count > resc.PageCount)
+        {
+            await SeparateRestRecordsAsync(resc.PageCount).ConfigureAwait(false);
+            _images = _records.Take(resc.PageCount).ToList();
+        }
+        else
+        {
+            _images = [.. _records];
+        }
+
+        ValidateImageCount(resc);
+    }
+
+    public async Task AnalyzeHdAsync(int expectedCount)
+    {
+        if (_records.Count > expectedCount)
+        {
+            await SeparateHdRestRecordsAsync(expectedCount).ConfigureAwait(false);
+            _images = _records.Take(expectedCount).ToList();
+        }
+        else
+        {
+            _images = [.. _records];
+        }
+
+        if (_images.Count != expectedCount)
+            throw new MobiMetadataException($"HD count {_images.Count} != SD count {expectedCount}");
+    }
+
+    public async Task SeparateFontsAsync()
+    {
+        var fonts = new List<PageRecord>();
+        var remainingImages = new List<PageRecord>();
+
+        for (int i = _images.Count - 1; i >= 0; i--)
+        {
+            if (await _images[i].IsFontAsync().ConfigureAwait(false))
             {
-                var restOfRecords = _allRecords.Skip(pageCount).ToList();
-
-                for (int i = 0, sz = restOfRecords.Count; i < sz; i++)
-                {
-                    var record = restOfRecords[i];
-
-                    // The kindle:embed record
-                    if (await record.IsKindleEmbedRecordAsync().ConfigureAwait(false))
-                    {
-                        KindleEmbedRecord = record;
-                        restOfRecords[i] = null;
-                    }
-                }
-
-                // Set the "real" rest and the image records
-                RestOfRecords = restOfRecords.Where(record => record != null).ToList();
-                ImageRecords = _allRecords.Take(pageCount).ToList();
+                fonts.Add(_images[i]);
+                Resc?.AdjustPageCount(-1);
             }
             else
             {
-                ImageRecords = _allRecords;
-            }
-
-            if (ImageRecords.Count != pageCount)
-            {
-                throw new MobiMetadataException($"HD container pageCount {ImageRecords.Count} vs SD pageCount {pageCount} mismatch?");
+                remainingImages.Add(_images[i]);
             }
         }
+
+        if (fonts.Count > 0)
+        {
+            _fonts = fonts;
+            _images = Enumerable.Reverse(remainingImages).ToList();
+        }
+    }
+
+    public int PageCount => _images.Count;
+
+    public async Task<byte[]> GetImageBytesAsync(int pageIndex)
+    {
+        if (pageIndex < 0 || pageIndex >= _images.Count)
+            throw new ArgumentOutOfRangeException(nameof(pageIndex));
+        return await _images[pageIndex].GetImageBytesAsync().ConfigureAwait(false);
+    }
+
+    public Stream OpenImageStream(int pageIndex)
+    {
+        if (pageIndex < 0 || pageIndex >= _images.Count)
+            throw new ArgumentOutOfRangeException(nameof(pageIndex));
+        return _images[pageIndex].OpenImageStream();
+    }
+
+    public async Task<byte[]?> GetCoverBytesAsync()
+    {
+        if (Cover == null) return null;
+        return await Cover.GetImageBytesAsync().ConfigureAwait(false);
+    }
+
+    public Stream? OpenCoverStream() => Cover?.OpenImageStream();
+
+    private async Task<(int Index, RescRecord? Resc)> FindRescIndexAsync()
+    {
+        for (var i = _records.Count - 1; i >= 0; i--)
+        {
+            var rescRecord = await _records[i].GetRescRecordAsync().ConfigureAwait(false);
+            if (rescRecord != null)
+            {
+                return (i, rescRecord);
+            }
+        }
+        return (-1, null);
+    }
+
+    private async Task RemoveDatpFromEndIfNeededAsync(RescRecord resc)
+    {
+        if (_records.Count == resc.PageCount && _records.Count > 0)
+        {
+            var lastIdx = _records.Count - 1;
+            if (await _records[lastIdx].IsDatpAsync().ConfigureAwait(false))
+            {
+                Datp = _records[lastIdx];
+                _records.RemoveAt(lastIdx);
+                resc.AdjustPageCount(-1);
+            }
+        }
+    }
+
+    private async Task SeparateRestRecordsAsync(int imageCount)
+    {
+        var rest = _records.Skip(imageCount).ToList();
+        var remainingRest = new List<PageRecord>();
+
+        foreach (var record in rest)
+        {
+            if (await record.IsDatpAsync().ConfigureAwait(false))
+            {
+                Datp = record;
+            }
+            else
+            {
+                remainingRest.Add(record);
+            }
+        }
+
+        _rest = remainingRest;
+    }
+
+    private async Task SeparateHdRestRecordsAsync(int expectedCount)
+    {
+        var rest = _records.Skip(expectedCount).ToList();
+        var remainingRest = new List<PageRecord>();
+
+        foreach (var record in rest)
+        {
+            if (await record.IsKindleEmbedAsync().ConfigureAwait(false))
+            {
+                KindleEmbed = record;
+            }
+            else
+            {
+                remainingRest.Add(record);
+            }
+        }
+
+        _rest = remainingRest;
+    }
+
+    private void ValidateImageCount(RescRecord resc)
+    {
+        if (_images.Count < resc.PageCount)
+            throw new MobiMetadataException($"Image count {_images.Count} < RESC page count {resc.PageCount}");
     }
 }

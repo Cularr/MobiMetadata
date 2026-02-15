@@ -1,9 +1,11 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.4.33122.133
+# Visual Studio Version 18
+VisualStudioVersion = 18.2.11430.68 d18.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MobiMetadata", "Source\MobiMetadata\MobiMetadata.csproj", "{1B7F3642-C07F-484B-BA44-125F2CE21584}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MobiMetadata.Tests", "Source\MobiMetadata.Tests\MobiMetadata.Tests.csproj", "{8F242D7D-45E1-9D7E-A845-D81770F0FEF2}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,6 +17,10 @@ Global
 		{1B7F3642-C07F-484B-BA44-125F2CE21584}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1B7F3642-C07F-484B-BA44-125F2CE21584}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1B7F3642-C07F-484B-BA44-125F2CE21584}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8F242D7D-45E1-9D7E-A845-D81770F0FEF2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8F242D7D-45E1-9D7E-A845-D81770F0FEF2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8F242D7D-45E1-9D7E-A845-D81770F0FEF2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8F242D7D-45E1-9D7E-A845-D81770F0FEF2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -1,10 +1,4 @@
 ﻿namespace MobiMetadata
 {
-    public class MobiMetadataException : Exception
-    {
-        public MobiMetadataException(string message)
-            : base(message)
-        {
-        }
-    }
+    public class MobiMetadataException(string message) : Exception(message);
 }

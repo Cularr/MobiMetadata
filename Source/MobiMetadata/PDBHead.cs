@@ -1,125 +1,83 @@
-﻿namespace MobiMetadata
+namespace MobiMetadata;
+
+public class PDBHead : BaseHead
 {
-    public class PDBHead : BaseHead
+    private static readonly List<Attr> _attrs = [];
+    private static readonly Attr _name = new(32, _attrs);
+    private static readonly Attr _attributes = new(2, _attrs);
+    private static readonly Attr _version = new(2, _attrs);
+    private static readonly Attr _creationDate = new(4, _attrs);
+    private static readonly Attr _modificationDate = new(4, _attrs);
+    private static readonly Attr _lastBackupDate = new(4, _attrs);
+    private static readonly Attr _modificationNumber = new(4, _attrs);
+    private static readonly Attr _appInfoId = new(4, _attrs);
+    private static readonly Attr _sortInfoId = new(4, _attrs);
+    private static readonly Attr _type = new(4, _attrs);
+    private static readonly Attr _creator = new(4, _attrs);
+    private static readonly Attr _uniqueIdSeed = new(4, _attrs);
+    private static readonly Attr _nextRecordListId = new(4, _attrs);
+    private static readonly Attr _numRecords = new(2);
+    private static readonly Attr _gapToData = new(2);
+
+    private PDBRecordInfo[] _records = [];
+    private Memory<byte> _numRecordsData;
+
+    public PDBRecordInfo[] Records => _records;
+
+    public PDBHead(bool skipProperties = false, bool skipRecords = false)
     {
-        private static readonly List<Attr> _pdbHeadAttrs = new();
-
-        private static readonly Attr _nameAttr = new(32, _pdbHeadAttrs);
-
-        private static readonly Attr _attributesAttr = new(2, _pdbHeadAttrs);
-
-        private static readonly Attr _versionAttr = new(2, _pdbHeadAttrs);
-
-        private static readonly Attr _creationDateAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _modificationDateAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _lastBackupDateAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _modificationNumberAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _appInfoIDAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _sortInfoIDAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _typeAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _creatorAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _uniqueIDSeedAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _nextRecordListIDAttr = new(4, _pdbHeadAttrs);
-
-        private static readonly Attr _numRecordsAttr = new(2);
-
-        private static readonly Attr _gapToDataAttr = new(2);
-
-        private PDBRecordInfo[] _recordInfoList;
-
-        public PDBRecordInfo[] Records => _recordInfoList;
-
-        private Memory<byte> NumRecordsData { get; set; }
-
-        private Memory<byte> RecordsData { get; set; }
-
-        public PDBHead(bool skipProperties = false, bool skipRecords = false)
-        {
-            SkipProperties = skipProperties;
-            SkipRecords = skipRecords;
-        }
-
-        public override async Task ReadHeaderAsync(Stream stream)
-        {
-            var attrLen = _pdbHeadAttrs.Sum(x => x.Length);
-            await SkipOrReadHeaderDataAsync(stream, attrLen).ConfigureAwait(false);
-
-            NumRecordsData = new byte[_numRecordsAttr.Length];
-            await stream.ReadAsync(NumRecordsData).ConfigureAwait(false);
-
-            var recordCount = NumRecords;
-            var recordDataSize = recordCount * PDBRecordInfo.PdbRecordLen;
-
-            if (SkipRecords)
-            {
-                stream.Position += recordDataSize;
-            }
-            else
-            {
-                RecordsData = new byte[recordDataSize];
-                await stream.ReadAsync(RecordsData).ConfigureAwait(false);
-
-                _recordInfoList = new PDBRecordInfo[recordCount];
-                var recordPos = 0;
-
-                for (int i = 0; i < recordCount; i++)
-                {
-                    var recordInfo = new PDBRecordInfo(RecordsData, recordPos);
-                    _recordInfoList[i] = recordInfo;
-
-                    recordPos += PDBRecordInfo.PdbRecordLen;
-                }
-            }
-
-            // Finally move on to next header
-            stream.Position += _gapToDataAttr.Length;
-        }
-
-        public bool IsHDImageContainer => TypeAsString == "RBIN" && CreatorAsString == "CONT";
-
-        public string Name => GetPropAsUtf8RemoveNull(_nameAttr);
-
-        public ushort Attributes => GetPropAsUshort(_attributesAttr);
-
-        public ushort Version => GetPropAsUshort(_versionAttr);
-
-        public uint CreationDate => GetPropAsUint(_creationDateAttr);
-
-        public uint ModificationDate => GetPropAsUint(_modificationDateAttr);
-
-        public uint LastBackupDate => GetPropAsUint(_lastBackupDateAttr);
-
-        public uint ModificationNumber => GetPropAsUint(_modificationNumberAttr);
-
-        public uint AppInfoID => GetPropAsUint(_appInfoIDAttr);
-
-        public uint SortInfoID => GetPropAsUint(_sortInfoIDAttr);
-
-        public uint Type => GetPropAsUint(_typeAttr);
-
-        public string TypeAsString => GetPropAsUtf8RemoveNull(_typeAttr);
-
-        public uint Creator => GetPropAsUint(_creatorAttr);
-
-        public string CreatorAsString => GetPropAsUtf8RemoveNull(_creatorAttr);
-
-        public uint UniqueIDSeed => GetPropAsUint(_uniqueIDSeedAttr);
-
-        public ushort NumRecords => GetDataAsUshort(NumRecordsData);
-
-        //public ushort GapToData => Converter.ToUInt16(GapToDataAttr.GetData(HeaderData).Span);
-
-        public uint MobiHeaderSize => _recordInfoList.Length > 1
-                                        ? _recordInfoList[1].RecordDataOffset - _recordInfoList[0].RecordDataOffset
-                                        : 0;
+        SkipProperties = skipProperties;
+        SkipRecords = skipRecords;
     }
+
+    public override async Task ReadHeaderAsync(Stream stream)
+    {
+        await SkipOrReadHeaderDataAsync(stream, _attrs.Sum(a => a.Length)).ConfigureAwait(false);
+
+        _numRecordsData = new byte[_numRecords.Length];
+        await stream.ReadAsync(_numRecordsData).ConfigureAwait(false);
+
+        var recordCount = NumRecords;
+        var recordDataSize = recordCount * PDBRecordInfo.RecordSize;
+
+        if (SkipRecords)
+        {
+            stream.Position += recordDataSize;
+        }
+        else
+        {
+            var recordData = new byte[recordDataSize];
+            await stream.ReadAsync(recordData).ConfigureAwait(false);
+
+            _records = new PDBRecordInfo[recordCount];
+            for (int i = 0; i < recordCount; i++)
+            {
+                _records[i] = new PDBRecordInfo(recordData, i * PDBRecordInfo.RecordSize);
+            }
+        }
+
+        stream.Position += _gapToData.Length;
+    }
+
+    public string Name => GetPropAsUtf8Trimmed(_name);
+    public ushort Attributes => GetPropAsUshort(_attributes);
+    public ushort Version => GetPropAsUshort(_version);
+    public uint CreationDate => GetPropAsUint(_creationDate);
+    public uint ModificationDate => GetPropAsUint(_modificationDate);
+    public uint LastBackupDate => GetPropAsUint(_lastBackupDate);
+    public uint ModificationNumber => GetPropAsUint(_modificationNumber);
+    public uint AppInfoId => GetPropAsUint(_appInfoId);
+    public uint SortInfoId => GetPropAsUint(_sortInfoId);
+    public uint Type => GetPropAsUint(_type);
+    public string TypeName => GetPropAsUtf8Trimmed(_type);
+    public uint Creator => GetPropAsUint(_creator);
+    public string CreatorName => GetPropAsUtf8Trimmed(_creator);
+    public uint UniqueIdSeed => GetPropAsUint(_uniqueIdSeed);
+    public ushort NumRecords => Converter.ToUInt16(_numRecordsData.Span);
+
+    public bool IsHdImageContainer => TypeName == "RBIN" && CreatorName == "CONT";
+
+    public uint MobiHeaderSize => _records.Length > 1
+        ? _records[1].DataOffset - _records[0].DataOffset
+        : 0;
 }

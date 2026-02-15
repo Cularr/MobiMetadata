@@ -1,140 +1,160 @@
-﻿using System.Buffers;
+using System.Buffers;
 using System.Text;
 
-namespace MobiMetadata
+namespace MobiMetadata;
+
+public class PageRecord
 {
-    public class PageRecord
+    private static readonly byte[] CRES = Encoding.ASCII.GetBytes("CRES");
+    private static readonly byte[] DATP = Encoding.ASCII.GetBytes("DATP");
+    private static readonly byte[] RESC = Encoding.ASCII.GetBytes("RESC");
+    private static readonly byte[] FONT = Encoding.ASCII.GetBytes("FONT");
+    private static readonly byte[] KindleEmbed = Encoding.ASCII.GetBytes("kindle:embed");
+
+    private readonly Stream _stream;
+    private readonly long _position;
+    private readonly int _length;
+    private readonly int _dataOffset;
+    private readonly SemaphoreSlim _semaphore;
+
+    public PageRecord(Stream stream, long position, uint length, int dataOffset = 0, SemaphoreSlim? semaphore = null)
     {
-        protected readonly Stream _stream;
-        protected readonly long _pos;
-        protected readonly int _len;
+        _stream = stream;
+        _position = position;
+        _length = (int)length;
+        _dataOffset = dataOffset;
+        _semaphore = semaphore ?? new SemaphoreSlim(1, 1);
+    }
 
-        protected class RecordId
+    public int Size => _length;
+    protected int DataLength => _length;
+
+    public bool IsCresPlaceholder => _length == 4;
+
+    public async Task<bool> IsCresAsync() => await MatchSignatureAsync(CRES).ConfigureAwait(false);
+    public async Task<bool> IsDatpAsync() => await MatchSignatureAsync(DATP).ConfigureAwait(false);
+    public async Task<bool> IsFontAsync() => await MatchSignatureAsync(FONT).ConfigureAwait(false);
+    public async Task<bool> IsKindleEmbedAsync() => await MatchSignatureAsync(KindleEmbed).ConfigureAwait(false);
+
+    public async Task<RescRecord?> GetRescRecordAsync()
+    {
+        if (!await MatchSignatureAsync(RESC).ConfigureAwait(false))
+            return null;
+
+        return new RescRecord(_stream, _position, (uint)_length, _semaphore);
+    }
+
+    private async Task<bool> MatchSignatureAsync(byte[] signature)
+    {
+        await _semaphore.WaitAsync().ConfigureAwait(false);
+        try
         {
-            public static Memory<byte> CRES => Encoding.ASCII.GetBytes("CRES");
-
-            public static Memory<byte> KindleEmbed => Encoding.ASCII.GetBytes("kindle:embed");
-
-            public static Memory<byte> DATP => Encoding.ASCII.GetBytes("DATP");
-
-            public static Memory<byte> RESC => Encoding.ASCII.GetBytes("RESC");
-
-            public static Memory<byte> FONT => Encoding.ASCII.GetBytes("FONT");
+            _stream.Position = _position;
+            var buffer = new byte[signature.Length];
+            await _stream.ReadExactlyAsync(buffer).ConfigureAwait(false);
+            return buffer.AsSpan().SequenceEqual(signature);
         }
-
-        public PageRecord(Stream stream, long pos, uint len)
+        finally
         {
-            _stream = stream;
-            _pos = pos;
-            _len = (int)len;
+            _semaphore.Release();
         }
+    }
 
-        public async Task<RescRecord?> GetRescRecordAsync()
+    public byte[] ReadData()
+    {
+        _semaphore.Wait();
+        try
         {
-            _stream.Position = _pos;
-
-            RescRecord rescRecord = null!;
-            if (!await IsRecordIdAsync(RecordId.RESC).ConfigureAwait(false))
-            {
-                return rescRecord;
-            }
-
-            rescRecord = new RescRecord(_stream, _pos, (uint)_len);
-            return rescRecord;
+            _stream.Position = _position;
+            var buffer = new byte[_length];
+            _stream.ReadExactly(buffer);
+            return buffer;
         }
-
-        public bool IsLen1992Record() => _len == 1992;
-
-        public async Task<bool> IsDatpRecordAsync()
+        finally
         {
-            _stream.Position = _pos;
-
-            return await IsRecordIdAsync(RecordId.DATP).ConfigureAwait(false);
+            _semaphore.Release();
         }
+    }
 
-        public async Task<bool> IsFontRecordAsync()
+    public async Task<byte[]> ReadDataAsync()
+    {
+        await _semaphore.WaitAsync().ConfigureAwait(false);
+        try
         {
-            _stream.Position = _pos;
-
-            return await IsRecordIdAsync(RecordId.FONT).ConfigureAwait(false);
+            _stream.Position = _position;
+            var buffer = new byte[_length];
+            await _stream.ReadExactlyAsync(buffer).ConfigureAwait(false);
+            return buffer;
         }
-
-        public async Task<bool> IsKindleEmbedRecordAsync()
+        finally
         {
-            _stream.Position = _pos;
-
-            return await IsRecordIdAsync(RecordId.KindleEmbed).ConfigureAwait(false);
+            _semaphore.Release();
         }
+    }
 
-        public bool IsCresPlaceHolder() => _len == 4;
-
-        public async Task<bool> IsCresRecordAsync()
+    protected async Task<Memory<byte>> ReadDataAsync(int offset, int length)
+    {
+        var buffer = new byte[length];
+        await _semaphore.WaitAsync().ConfigureAwait(false);
+        try
         {
-            _stream.Position = _pos;
-
-            return await IsRecordIdAsync(RecordId.CRES).ConfigureAwait(false);
+            _stream.Position = _position + offset;
+            await _stream.ReadExactlyAsync(buffer).ConfigureAwait(false);
+            return buffer;
         }
-
-        public int Length => _len;
-
-        protected async Task<bool> IsRecordIdAsync(Memory<byte> recordId)
+        finally
         {
-            var idLen = recordId.Length;
-
-            var data = await ReadDataAsync(idLen).ConfigureAwait(false);
-
-            return data.Span.SequenceEqual(recordId.Span);
+            _semaphore.Release();
         }
+    }
 
-        protected virtual int GetMagic() => 0;
-
-        protected async Task<Memory<byte>> ReadDataAsync(int length)
+    public byte[] GetImageBytes()
+    {
+        var dataLength = _length - _dataOffset;
+        var buffer = new byte[dataLength];
+        
+        _semaphore.Wait();
+        try
         {
-            var bytes = ArrayPool<byte>.Shared.Rent(length);
-            try
-            {
-                var memory = bytes.AsMemory(0, length);
-                var read = await _stream.ReadAsync(memory).ConfigureAwait(false);
-
-                if (read != length)
-                {
-                    throw new MobiMetadataException($"Error reading record. Expected {length} bytes, got {read}");
-                }
-
-                return memory;
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(bytes);
-            }
+            _stream.Position = _position + _dataOffset;
+            _stream.ReadExactly(buffer);
+            return buffer;
         }
-
-        public virtual async Task WriteDataAsync(params Stream[] streams) => await WriteDataCoreAsync(null!, streams).ConfigureAwait(false);
-
-        protected async Task<bool> WriteDataCoreAsync(Memory<byte>? recordId = null, params Stream[] streams)
+        finally
         {
-            _stream.Position = _pos;
+            _semaphore.Release();
+        }
+    }
 
-            var memory = await ReadDataAsync(_len).ConfigureAwait(false);
+    public async Task<byte[]> GetImageBytesAsync()
+    {
+        var dataLength = _length - _dataOffset;
+        var buffer = new byte[dataLength];
+        
+        await _semaphore.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _stream.Position = _position + _dataOffset;
+            await _stream.ReadExactlyAsync(buffer).ConfigureAwait(false);
+            return buffer;
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
 
-            // Only write data if this record begins with the specified recordId 
-            if (recordId.HasValue && !memory.Span.StartsWith(recordId.Value.Span))
-            {
-                return false;
-            }
-
-            var magic = GetMagic();
-            memory = magic > 0 && magic < memory.Length ? memory[magic..] : memory;
-
-            foreach (var stream in streams)
-            {
-                if (stream != null)
-                {
-                    await stream.WriteAsync(memory).ConfigureAwait(false);
-                }
-            }
-
-            return true;
+    public Stream OpenImageStream()
+    {
+        _semaphore.Wait();
+        try
+        {
+            _stream.Position = _position + _dataOffset;
+            return new SubStream(_stream, _position + _dataOffset, _length - _dataOffset);
+        }
+        finally
+        {
+            _semaphore.Release();
         }
     }
 }

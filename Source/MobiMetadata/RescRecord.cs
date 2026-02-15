@@ -1,86 +1,89 @@
-﻿using System.Text;
+using System.Text;
 using System.Xml;
 
-namespace MobiMetadata
+namespace MobiMetadata;
+
+public class RescRecord : PageRecord
 {
-    public class RescRecord : PageRecord
+    private string _xmlContent = "";
+
+    public int PageCount { get; private set; }
+
+    public RescRecord(Stream stream, long position, uint length, SemaphoreSlim? semaphore = null)
+        : base(stream, position, length, 0, semaphore)
     {
-        private static XmlReaderSettings XmlReaderSettings => new()
+    }
+
+    public void AdjustPageCount(int delta) => PageCount += delta;
+
+    public async Task ParseAsync()
+    {
+        var contentLength = DataLength - 4;
+        var data = await ReadDataAsync(4, contentLength).ConfigureAwait(false);
+
+        var xmlStr = Encoding.UTF8.GetString(data.Span).TrimEnd('\0');
+
+        var start = xmlStr.IndexOf('<');
+        var end = xmlStr.LastIndexOf('>') + 1;
+
+        if (start >= 0 && end > start)
+        {
+            _xmlContent = xmlStr[start..end];
+        }
+
+        PageCount = CountPages();
+    }
+
+    private int CountPages()
+    {
+        var count = 0;
+        var settings = new XmlReaderSettings
         {
             IgnoreComments = true,
             IgnoreProcessingInstructions = true,
             IgnoreWhitespace = true,
             ConformanceLevel = ConformanceLevel.Fragment,
-            Async = true,
+            Async = true
         };
 
-        private static XmlWriterSettings XmlWriterSettings => new()
+        using var reader = XmlReader.Create(new StringReader(_xmlContent), settings);
+
+        while (reader.Read())
+        {
+            if (reader.Name == "itemref")
+            {
+                var idRef = reader.GetAttribute("idref");
+                var skelId = reader.GetAttribute("skelid");
+
+                if (idRef != null && skelId != null)
+                    count++;
+            }
+        }
+
+        return count;
+    }
+
+    public async Task<string> GetPrettyXmlAsync()
+    {
+        var sb = new StringBuilder();
+        var settings = new XmlWriterSettings
         {
             ConformanceLevel = ConformanceLevel.Fragment,
             Indent = true,
-            Async = true,
+            Async = true
         };
 
-        private string _xmlStr;
-
-        public int PageCount { get; private set; }
-
-        public void AdjustPageCountBy(int count)
+        using var reader = XmlReader.Create(new StringReader(_xmlContent), new XmlReaderSettings
         {
-            PageCount += count;
-        }
+            IgnoreComments = true,
+            IgnoreProcessingInstructions = true,
+            IgnoreWhitespace = true,
+            ConformanceLevel = ConformanceLevel.Fragment
+        });
 
-        public RescRecord(Stream stream, long pos, uint len)
-            : base(stream, pos, len)
-        { }
+        using var writer = XmlWriter.Create(sb, settings);
+        await writer.WriteNodeAsync(reader, false).ConfigureAwait(false);
 
-        public async Task<string> GetPrettyPrintXmlAsync()
-        {
-            var sb = new StringBuilder();
-
-            using (var xmlReader = XmlReader.Create(new StringReader(_xmlStr), XmlReaderSettings))
-            using (var xmlWriter = XmlWriter.Create(sb, XmlWriterSettings))
-            {
-                await xmlWriter.WriteNodeAsync(xmlReader, false).ConfigureAwait(false);
-            }
-            return sb.ToString();
-        }
-
-        public async Task ParseXmlAsync()
-        {
-            var len = _len - RecordId.RESC.Length;
-
-            var data = await ReadDataAsync(len).ConfigureAwait(false);
-
-            var xmlStr = Encoding.UTF8.GetString(data.Span);
-            xmlStr = xmlStr.Replace("\0", null).Trim();
-
-            var xmlBegin = xmlStr.IndexOf("<");
-            var xmlEnd = xmlStr.LastIndexOf(">") + 1;
-
-            _xmlStr = xmlStr[xmlBegin..xmlEnd];
-
-            int pageCount = 0;
-            var strReader = new StringReader(_xmlStr);
-
-            using var xmlReader = XmlReader.Create(strReader, XmlReaderSettings);
-            await xmlReader.ReadAsync().ConfigureAwait(false);
-
-            while (await xmlReader.ReadAsync().ConfigureAwait(false))
-            {
-                if (xmlReader.Name == "itemref")
-                {
-                    var idRef = xmlReader.GetAttribute("idref");
-                    var skelId = xmlReader.GetAttribute("skelid");
-
-                    if (idRef != null && skelId != null)
-                    {
-                        pageCount++;
-                    }
-                }
-            }
-
-            PageCount = pageCount;
-        }
+        return sb.ToString();
     }
 }

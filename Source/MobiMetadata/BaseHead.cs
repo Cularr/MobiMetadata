@@ -1,75 +1,52 @@
-﻿using System.Text;
+using System.Text;
 
-namespace MobiMetadata
+namespace MobiMetadata;
+
+public abstract class BaseHead
 {
-    public abstract class BaseHead
+    protected Memory<byte> _headerData;
+
+    protected Memory<byte> HeaderData => _headerData;
+
+    public FileInfo? Path { get; set; }
+
+    public bool SkipProperties { get; set; }
+
+    public bool SkipRecords { get; set; }
+
+    public abstract Task ReadHeaderAsync(Stream stream);
+
+    protected sealed class Attr
     {
-        public FileInfo? Path { get; set; }
+        public int Position { get; }
+        public int Length { get; }
 
-        public sealed class Attr
+        public Attr(int length, List<Attr>? attrs = null)
         {
-            public Attr(int length, List<Attr> attrs = null!)
-            {
-                if (attrs != null)
-                {
-                    Position = attrs.Sum(a => a.Length);
-                    attrs.Add(this);
-                }
-
-                Length = length;
-            }
-
-            public int Position { get; set; }
-
-            public Memory<byte> GetData(Memory<byte> memory)
-            {
-                return memory.Slice(Position, Length);
-            }
-
-            public int Length { get; private set; }
+            Position = attrs?.Sum(a => a.Length) ?? 0;
+            Length = length;
+            attrs?.Add(this);
         }
 
-        public bool SkipProperties { get; set; }
-
-        public bool SkipRecords { get; set; }
-
-        public abstract Task ReadHeaderAsync(Stream stream);
-
-        protected Memory<byte> HeaderData { get; set; }
-
-        protected async Task SkipOrReadHeaderDataAsync(Stream stream, int length)
-        {
-            if (SkipProperties)
-            {
-                stream.Position += length;
-            }
-            else
-            {
-                await ReadHeaderDataAsync(stream, length).ConfigureAwait(false);
-            }
-        }
-
-        protected async Task ReadHeaderDataAsync(Stream stream, int length)
-        {
-            HeaderData = new byte[length];
-            await stream.ReadAsync(HeaderData).ConfigureAwait(false);
-        }
-
-        protected Memory<byte> GetPropData(Attr attr) => attr.GetData(HeaderData);
-
-
-        protected string GetPropAsUtf8(Attr attr) => GetDataAsUtf8(GetPropData(attr));
-
-        protected string GetPropAsUtf8RemoveNull(Attr attr) => GetDataAsUtf8(GetPropData(attr)).Replace("\0", null);
-
-        protected string GetDataAsUtf8(Memory<byte> memory) => Encoding.UTF8.GetString(memory.Span);
-
-        protected uint GetPropAsUint(Attr attr) => GetDataAsUint(GetPropData(attr));
-
-        protected uint GetDataAsUint(Memory<byte> memory) => Converter.ToUInt32(memory.Span);
-
-        protected ushort GetPropAsUshort(Attr attr) => GetDataAsUshort(GetPropData(attr));
-
-        protected ushort GetDataAsUshort(Memory<byte> memory) => Converter.ToUInt16(memory.Span);
+        public Memory<byte> GetData(Memory<byte> headerData) => headerData.Slice(Position, Length);
     }
+
+    protected async Task SkipOrReadHeaderDataAsync(Stream stream, int length)
+    {
+        if (SkipProperties)
+        {
+            stream.Position += length;
+        }
+        else
+        {
+            _headerData = new byte[length];
+            await stream.ReadAsync(_headerData).ConfigureAwait(false);
+        }
+    }
+
+    protected Memory<byte> GetPropData(Attr attr) => attr.GetData(_headerData);
+    protected string GetPropAsUtf8(Attr attr) => Encoding.UTF8.GetString(GetPropData(attr).Span);
+    protected string GetPropAsUtf8Trimmed(Attr attr) => GetPropAsUtf8(attr).TrimEnd('\0');
+    protected uint GetPropAsUint(Attr attr) => Converter.ToUInt32(GetPropData(attr).Span);
+    protected ushort GetPropAsUshort(Attr attr) => Converter.ToUInt16(GetPropData(attr).Span);
 }
