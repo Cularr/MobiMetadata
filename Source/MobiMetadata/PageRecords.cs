@@ -27,16 +27,18 @@ public class PageRecords
         uint coverOffset,
         uint thumbOffset)
     {
-        var safeLastIndex = Math.Min(lastImageIndex, (ushort)(pdbRecords.Length - 2));
+        var safeLastIndex = Math.Min((int)lastImageIndex, pdbRecords.Length - 1);
         var coverIndex = firstImageIndex + coverOffset;
         var thumbIndex = firstImageIndex + thumbOffset;
 
-        for (var i = firstImageIndex; i < safeLastIndex; i++)
+        for (var i = (long)firstImageIndex; i <= safeLastIndex; i++)
         {
             var record = pdbRecords[i];
-            var nextRecord = pdbRecords[i + 1];
+            var endOffset = i + 1 < pdbRecords.Length ? pdbRecords[i + 1].DataOffset : stream.Length;
             var recordOffset = record.DataOffset;
-            var length = (uint)(nextRecord.DataOffset - recordOffset);
+            if (endOffset < recordOffset || endOffset > stream.Length)
+                throw new MobiMetadataException("Image record offsets are outside the stream or out of order.");
+            var length = checked((uint)(endOffset - recordOffset));
 
             var pageRecord = new PageRecord(stream, recordOffset, length, dataOffset, _semaphore);
 
@@ -61,7 +63,14 @@ public class PageRecords
 
         if (rescIndex == -1 || resc == null)
         {
-            _images = [.. _records];
+            _images = [];
+            foreach (var record in _records)
+            {
+                if (await record.IsStructuralAsync().ConfigureAwait(false))
+                    _rest.Add(record);
+                else
+                    _images.Add(record);
+            }
             return;
         }
 

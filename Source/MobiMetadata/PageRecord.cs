@@ -44,8 +44,19 @@ public class PageRecord
         return new RescRecord(_stream, _position, (uint)_length, _semaphore);
     }
 
+    public async Task<bool> IsStructuralAsync()
+    {
+        foreach (var signature in new[] { "FDST", "FLIS", "FCIS", "INDX", "DATP" })
+        {
+            if (await MatchSignatureAsync(Encoding.ASCII.GetBytes(signature)).ConfigureAwait(false))
+                return true;
+        }
+        return _length < 4 || await MatchSignatureAsync(new byte[] { 0xe9, 0x8e, 0x0d, 0x0a }).ConfigureAwait(false);
+    }
+
     private async Task<bool> MatchSignatureAsync(byte[] signature)
     {
+        if (_length < signature.Length) return false;
         await _semaphore.WaitAsync().ConfigureAwait(false);
         try
         {
