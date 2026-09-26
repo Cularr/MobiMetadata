@@ -58,7 +58,9 @@ public class KF8Parser
         if (Present(_mobiHeader.NcxIndex))
         {
             var index = await ReadIndexAsync(_mobiHeader.NcxIndex).ConfigureAwait(false);
-            _ncx = index.Entries.Select(e => new NcxEntry { Level = Optional(e, 4), Offset = Optional(e, 1), Length = Optional(e, 2), Title = StringAt(index, Required(e, 3)), FragmentNumber = e.Tags.ContainsKey(6) ? Required(e, 6) : null, FragmentOffset = e.Tags.ContainsKey(6) ? Required(e, 6, 1) : null }).ToList();
+            var entries = index.Entries.Select(e => new NcxEntry { ParentIndex = e.Tags.ContainsKey(21) ? Required(e, 21) : null, Level = Optional(e, 4), Offset = Optional(e, 1), Length = Optional(e, 2), Title = StringAt(index, Required(e, 3)), FragmentNumber = e.Tags.ContainsKey(6) ? Required(e, 6) : null, FragmentOffset = e.Tags.ContainsKey(6) ? Required(e, 6, 1) : null }).ToList();
+            NcxNavigation.ResolveParents(entries);
+            _ncx = entries;
         }
     }
 
@@ -203,9 +205,10 @@ public class KF8Parser
         }
         throw Invalid("Unterminated variable integer");
     }
-    private static Encoding GetEncoding(uint code)
+    private Encoding GetEncoding(uint code)
     {
-        if (code == 65001 || code == uint.MaxValue || code == 0) return Encoding.UTF8;
+        if (code == uint.MaxValue || code == 0) return MobiEncoding.GetEncoding(_mobiHeader.TextEncoding);
+        if (code == 65001) return Encoding.UTF8;
         if (code == 1252) return MobiEncoding.GetEncoding(1252);
         throw new NotSupportedException($"Unsupported INDX encoding {code}");
     }
@@ -270,6 +273,8 @@ public record ChunkEntry
 public record FdstEntry(int Index, uint StartOffset, uint EndOffset);
 public record NcxEntry
 {
+    /// <summary>Zero-based NCX parent index; null uses level inference, uint.MaxValue denotes a root.</summary>
+    public uint? ParentIndex { get; set; }
     public uint Level { get; set; }
     public uint Offset { get; set; }
     public uint Length { get; set; }
@@ -278,6 +283,3 @@ public record NcxEntry
     public uint? FragmentOffset { get; set; }
     public List<NcxEntry> Children { get; } = [];
 }
-
-
-

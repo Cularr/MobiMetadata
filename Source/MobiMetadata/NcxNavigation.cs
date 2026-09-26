@@ -13,17 +13,57 @@ public class NcxNavigation
     }
     public List<NcxEntry> BuildHierarchy()
     {
+        var parents = ResolveParents(_entries);
         var roots = new List<NcxEntry>();
-        var ancestors = new Stack<NcxEntry>();
         foreach (var entry in _entries) entry.Children.Clear();
-        foreach (var entry in _entries)
+        for (int i = 0; i < _entries.Count; i++)
         {
-            while (ancestors.Count > 0 && ancestors.Peek().Level >= entry.Level) ancestors.Pop();
-            if (ancestors.Count == 0) roots.Add(entry);
-            else ancestors.Peek().Children.Add(entry);
-            ancestors.Push(entry);
+            if (parents[i] < 0) roots.Add(_entries[i]);
+            else _entries[parents[i]].Children.Add(_entries[i]);
         }
         return roots;
+    }
+
+    // Resolve and validate before mutating Children. Each parent edge is visited
+    // at most twice, avoiding recursion and quadratic walks on deeply nested TOCs.
+    internal static int[] ResolveParents(IReadOnlyList<NcxEntry> entries)
+    {
+        var parents = new int[entries.Count];
+        var ancestors = new Stack<int>();
+        var seen = new HashSet<NcxEntry>(ReferenceEqualityComparer.Instance);
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var entry = entries[i];
+            if (!seen.Add(entry)) throw new MobiMetadataException("Duplicate navigation entry reference.");
+            while (ancestors.Count > 0 && entries[ancestors.Peek()].Level >= entry.Level) ancestors.Pop();
+            if (entry.ParentIndex is uint parent)
+            {
+                if (parent != uint.MaxValue && parent >= entries.Count)
+                    throw new MobiMetadataException("NCX parent index is outside the navigation table.");
+                parents[i] = parent == uint.MaxValue ? -1 : (int)parent;
+            }
+            else parents[i] = ancestors.Count == 0 ? -1 : ancestors.Peek();
+            ancestors.Push(i);
+        }
+        var state = new byte[entries.Count];
+        for (int i = 0; i < entries.Count; i++)
+        {
+            int current = i;
+            while (current >= 0 && state[current] == 0)
+            {
+                state[current] = 1;
+                current = parents[current];
+            }
+            if (current >= 0 && state[current] == 1)
+                throw new MobiMetadataException("NCX parent relationships contain a cycle.");
+            current = i;
+            while (current >= 0 && state[current] == 1)
+            {
+                state[current] = 2;
+                current = parents[current];
+            }
+        }
+        return parents;
     }
     public List<NcxEntry> BuildHierarchicalToc() => BuildHierarchy();
     public NcxEntry? FindChapter(string title) => GetAllChapters().FirstOrDefault(e => e.Title?.Equals(title, StringComparison.OrdinalIgnoreCase) == true);
