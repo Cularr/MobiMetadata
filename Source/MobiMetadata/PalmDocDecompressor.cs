@@ -3,69 +3,58 @@ namespace MobiMetadata;
 public static class PalmDocDecompressor
 {
     public static void Decompress(ReadOnlySpan<byte> input, Span<byte> output)
+        => Decode(input, output);
+
+    private static int Decode(ReadOnlySpan<byte> input, Span<byte> output)
     {
-        var inPos = 0;
-        var outPos = 0;
-
-        while (inPos < input.Length && outPos < output.Length)
+        var written = 0;
+        for (var cursor = 0; cursor < input.Length;)
         {
-            var control = input[inPos++];
-
-            if (control == 0x00)
+            var token = input[cursor++];
+            if (token is >= 1 and <= 8)
             {
-                output[outPos++] = 0x00;
+                if (token > input.Length - cursor || token > output.Length - written)
+                    throw new MobiMetadataException("Invalid PalmDOC literal run or output limit exceeded");
+                input.Slice(cursor, token).CopyTo(output[written..]);
+                cursor += token;
+                written += token;
             }
-            else if (control <= 0x08)
+            else if (token is >= 0x80 and <= 0xbf)
             {
-                var count = Math.Min(control, Math.Min(input.Length - inPos, output.Length - outPos));
-                for (int i = 0; i < count; i++)
+                if (cursor == input.Length)
+                    throw new MobiMetadataException("Truncated PalmDOC back-reference");
+                var packed = ((token & 0x3f) << 8) | input[cursor++];
+                var distance = packed >> 3;
+                var count = (packed & 7) + 3;
+                if (distance == 0 || distance > written || count > output.Length - written)
+                    throw new MobiMetadataException("Invalid PalmDOC back-reference or output limit exceeded");
+                for (var i = 0; i < count; i++)
                 {
-                    output[outPos++] = input[inPos++];
-                }
-            }
-            else if (control <= 0x7F)
-            {
-                output[outPos++] = control;
-            }
-            else if (control <= 0xBF)
-            {
-                if (inPos >= input.Length) break;
-
-                var next = input[inPos++];
-                var value = ((control & 0x3F) << 8) | next;
-                var length = Math.Min((value >> 11) + 3, output.Length - outPos);
-                var distance = (value & 0x7FF) + 1;
-
-                var sourcePos = outPos - distance;
-                if (sourcePos < 0) continue;
-
-                for (int i = 0; i < length; i++)
-                {
-                    output[outPos++] = output[sourcePos + i];
+                    output[written] = output[written - distance];
+                    written++;
                 }
             }
             else
             {
-                if (outPos + 1 < output.Length)
-                {
-                    output[outPos++] = 0x20;
-                    output[outPos++] = (byte)(control ^ 0x80);
-                }
-                else if (outPos < output.Length)
-                {
-                    output[outPos++] = 0x20;
-                }
+                var count = token >= 0xc0 ? 2 : 1;
+                if (count > output.Length - written)
+                    throw new MobiMetadataException("PalmDOC output limit exceeded");
+                if (count == 2) output[written++] = 0x20;
+                output[written++] = count == 2 ? (byte)(token ^ 0x80) : token;
             }
         }
+        return written;
     }
 
     public static byte[] Decompress(ReadOnlySpan<byte> input, int outputLength)
     {
+        if (outputLength < 0 || outputLength > 64 * 1024 * 1024)
+            throw new MobiMetadataException("PalmDOC output limit exceeded");
         var output = new byte[outputLength];
-        Decompress(input, output);
-        return output;
+        var written = Decode(input, output);
+        return written == output.Length ? output : output.AsSpan(0, written).ToArray();
     }
 
-    public static async Task<byte[]> DecompressAsync(Memory<byte> input, int outputLength)
-        => await Task.Run(() => Decompress(input.Span, outputLength)).ConfigureAwait(false);
+    public static Task<byte[]> DecompressAsync(Memory<byte> input, int outputLength)
+        => Task.Run(() => Decompress(input.Span, outputLength));
 }

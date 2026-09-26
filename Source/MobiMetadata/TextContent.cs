@@ -1,21 +1,25 @@
-using System.Text;
-
 namespace MobiMetadata;
 
 public class TextContent
 {
+    private const int MaximumTextBytes = 256 * 1024 * 1024;
     private readonly Stream _stream;
     private readonly PDBRecordInfo[] _records;
     private readonly PalmDOCHead _palmDocHeader;
     private readonly MobiHead _mobiHeader;
+    private readonly int _firstTextRecord;
     private HuffCdicDecompressor? _huffCdic;
 
     public TextContent(Stream stream, PDBRecordInfo[] records, PalmDOCHead palmDocHeader, MobiHead mobiHeader)
+        : this(stream, records, palmDocHeader, mobiHeader, 1) { }
+
+    public TextContent(Stream stream, PDBRecordInfo[] records, PalmDOCHead palmDocHeader, MobiHead mobiHeader, int firstTextRecord)
     {
         _stream = stream;
         _records = records;
         _palmDocHeader = palmDocHeader;
         _mobiHeader = mobiHeader;
+        _firstTextRecord = firstTextRecord;
     }
 
     public string CompressionName => _palmDocHeader.CompressionName;
@@ -26,107 +30,73 @@ public class TextContent
     public async Task InitializeHuffCdicAsync()
     {
         if (_palmDocHeader.Compression != PalmDOCHead.CompressionHuffCdic) return;
-
-        _huffCdic = new HuffCdicDecompressor();
-        await _huffCdic.ReadRecordsAsync(
-            _stream, _records,
-            _mobiHeader.HuffmanRecordOffset,
-            _mobiHeader.HuffmanRecordCount).ConfigureAwait(false);
+        var offset = (long)_firstTextRecord - 1 + _mobiHeader.HuffmanRecordOffset;
+        if (offset < 0 || offset > uint.MaxValue) throw new MobiMetadataException("Invalid HUFF record offset");
+        var decoder = new HuffCdicDecompressor();
+        await decoder.ReadRecordsAsync(_stream, _records, (uint)offset, _mobiHeader.HuffmanRecordCount).ConfigureAwait(false);
+        _huffCdic = decoder;
     }
 
     public async Task<string> ExtractTextAsync()
     {
+        if (_palmDocHeader.EncryptionType != 0) throw new MobiMetadataException("Encrypted MOBI text is not supported");
+        if (TextLength > MaximumTextBytes) throw new MobiMetadataException("Text extraction size limit exceeded");
+        if (_firstTextRecord < 0 || _firstTextRecord > _records.Length || RecordCount > _records.Length - _firstTextRecord)
+            throw new MobiMetadataException("Invalid text record range");
+        if (_palmDocHeader.RecordSize == 0 && RecordCount != 0) throw new MobiMetadataException("Invalid text record size");
         if (_palmDocHeader.Compression == PalmDOCHead.CompressionHuffCdic && _huffCdic == null)
-        {
             await InitializeHuffCdicAsync().ConfigureAwait(false);
+
+        using var output = new MemoryStream((int)Math.Min(TextLength, 65536));
+        for (var i = 0; i < RecordCount; i++)
+        {
+            var record = await StreamAccess.ReadRecordAsync(_stream, _records, _firstTextRecord + i).ConfigureAwait(false);
+            var payloadLength = GetPayloadLength(record, _mobiHeader.ExtraDataFlags);
+            var data = _palmDocHeader.Compression switch
+            {
+                PalmDOCHead.CompressionNone => record.AsSpan(0, payloadLength).ToArray(),
+                PalmDOCHead.CompressionPalmDoc => PalmDocDecompressor.Decompress(record.AsSpan(0, payloadLength), _palmDocHeader.RecordSize),
+                PalmDOCHead.CompressionHuffCdic => _huffCdic!.Decompress(record.AsSpan(0, payloadLength), _palmDocHeader.RecordSize),
+                _ => throw new MobiMetadataException($"Unknown compression: {_palmDocHeader.Compression}")
+            };
+            if (data.Length > _palmDocHeader.RecordSize) throw new MobiMetadataException("Text record exceeds declared size");
+            var remaining = (int)(TextLength - output.Length);
+            if (data.Length > remaining && i != RecordCount - 1)
+                throw new MobiMetadataException("Text exceeds declared length before final record");
+            output.Write(data, 0, Math.Min(data.Length, remaining));
         }
+        if (output.Length != TextLength) throw new MobiMetadataException("Text is shorter than its declared length");
+        return MobiEncoding.GetEncoding(_mobiHeader.TextEncoding).GetString(output.GetBuffer(), 0, (int)output.Length);
+    }
 
-        var firstRecord = _mobiHeader.FirstContentRecord;
-        var lastRecord = _mobiHeader.LastContentRecord;
-
-        if (firstRecord == 0) firstRecord = 1;
-        if (lastRecord == 0) lastRecord = (ushort)(_palmDocHeader.RecordCount - 1);
-
-        var textRecords = new List<byte[]>();
-
-        for (ushort i = firstRecord; i <= lastRecord && i < _records.Length; i++)
+    private static int GetPayloadLength(ReadOnlySpan<byte> record, ushort flags)
+    {
+        var end = record.Length;
+        for (var bit = 15; bit >= 1; bit--)
         {
-            var recordData = await ReadTextRecordAsync(i).ConfigureAwait(false);
-            if (recordData != null) textRecords.Add(recordData);
+            if ((flags & (1 << bit)) == 0) continue;
+            var size = 0;
+            var encodedBytes = 0;
+            var terminated = false;
+            for (var n = 0; n < 4 && n < end; n++)
+            {
+                var value = record[end - n - 1];
+                size |= (value & 127) << (n * 7);
+                encodedBytes++;
+                if ((value & 128) != 0) { terminated = true; break; }
+            }
+            if (!terminated || size < encodedBytes || size > end)
+                throw new MobiMetadataException("Invalid trailing text entry");
+            end -= size;
         }
-
-        var combined = CombineRecords(textRecords);
-        return DecodeText(combined);
-    }
-
-    private static byte[] CombineRecords(List<byte[]> records)
-    {
-        var totalLength = records.Sum(r => r.Length);
-        var combined = new byte[totalLength];
-        var offset = 0;
-
-        foreach (var record in records)
+        if ((flags & 1) != 0)
         {
-            Buffer.BlockCopy(record, 0, combined, offset, record.Length);
-            offset += record.Length;
+            if (end == 0) throw new MobiMetadataException("Missing text overlap trailer");
+            var size = (record[end - 1] & 3) + 1;
+            if (size > end) throw new MobiMetadataException("Invalid text overlap trailer");
+            end -= size;
         }
-
-        return combined;
-    }
-
-    private async Task<byte[]?> ReadTextRecordAsync(ushort index)
-    {
-        if (index >= _records.Length) return null;
-
-        var record = _records[index];
-        var nextRecord = index + 1 < _records.Length ? _records[index + 1] : null;
-
-        var offset = record.DataOffset;
-        var length = nextRecord != null
-            ? (int)(nextRecord.DataOffset - offset)
-            : _palmDocHeader.RecordSize;
-
-        _stream.Position = offset;
-        var recordData = new byte[length];
-        await _stream.ReadAsync(recordData).ConfigureAwait(false);
-
-        if (length < 2) return recordData;
-
-        // Record format: 2-byte trailing count + data + trailing bytes
-        var trailBytes = recordData[1];
-        var dataStart = 2;
-        var dataEnd = length - trailBytes;
-
-        if (dataEnd <= dataStart) return [];
-
-        var compressedData = new byte[dataEnd - dataStart];
-        Buffer.BlockCopy(recordData, dataStart, compressedData, 0, compressedData.Length);
-
-        var decompressedLength = _palmDocHeader.RecordSize - 2 - trailBytes;
-
-        return _palmDocHeader.Compression switch
-        {
-            PalmDOCHead.CompressionNone => compressedData,
-            PalmDOCHead.CompressionPalmDoc => PalmDocDecompressor.Decompress(compressedData, decompressedLength),
-            PalmDOCHead.CompressionHuffCdic => DecompressHuffCdic(compressedData, decompressedLength),
-            _ => throw new MobiMetadataException($"Unknown compression: {_palmDocHeader.Compression}")
-        };
-    }
-
-    private byte[] DecompressHuffCdic(byte[] data, int length)
-    {
-        if (_huffCdic == null)
-            throw new MobiMetadataException("HUFF/CDIC not initialized");
-        return _huffCdic.Decompress(data, length);
-    }
-
-    private string DecodeText(byte[] data)
-    {
-        return _mobiHeader.TextEncoding switch
-        {
-            65001 => Encoding.UTF8.GetString(data),
-            1252 => Encoding.GetEncoding(1252).GetString(data),
-            _ => Encoding.UTF8.GetString(data)
-        };
+        return end;
     }
 }
+
