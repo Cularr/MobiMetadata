@@ -11,8 +11,8 @@ public class PageRecordBoundaryTests
     [InlineData(3, ushort.MaxValue)]
     public async Task should_include_the_last_image_record(int recordCount, ushort lastContentRecord)
     {
-        // Three distinct payloads: validate range selection independently of image decoding.
-        var bytes = Enumerable.Range(0, recordCount * 8).Select(i => (byte)i).ToArray();
+        // Distinct JPEG-signature payloads; range selection needs no image decoding.
+        var bytes = CreateImageBytes(recordCount);
         using var stream = new MemoryStream(bytes);
         var records = CreateRecords(recordCount);
         var pages = new PageRecords(stream, records, 0, 0, lastContentRecord, uint.MaxValue, uint.MaxValue);
@@ -50,7 +50,7 @@ public class PageRecordBoundaryTests
     [InlineData("FCIS")]
     public async Task should_not_count_trailing_structural_records_as_images(string signature)
     {
-        var bytes = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
+        var bytes = CreateImageBytes(4);
         System.Text.Encoding.ASCII.GetBytes(signature).CopyTo(bytes, 24);
         using var stream = new MemoryStream(bytes);
         var pages = new PageRecords(stream, CreateRecords(4), 0, 0, 3, uint.MaxValue, uint.MaxValue);
@@ -68,5 +68,13 @@ public class PageRecordBoundaryTests
         for (var i = 0; i < count; i++)
             BinaryPrimitives.WriteUInt32BigEndian(table.AsSpan(i * 8, 4), (uint)(i * 8));
         return Enumerable.Range(0, count).Select(i => new PDBRecordInfo(table, i * 8)).ToArray();
+    }
+
+    private static byte[] CreateImageBytes(int count)
+    {
+        var bytes = Enumerable.Range(0, count * 8).Select(i => (byte)i).ToArray();
+        for (int i = 0; i < count; i++)
+            new byte[] { 0xff, 0xd8, 0xff }.CopyTo(bytes, i * 8);
+        return bytes;
     }
 }

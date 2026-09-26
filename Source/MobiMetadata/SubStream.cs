@@ -5,11 +5,14 @@ internal class SubStream : Stream
     private readonly Stream _baseStream;
     private readonly long _start;
     private readonly long _length;
+    private readonly SemaphoreSlim _semaphore;
     private long _position;
 
     public SubStream(Stream baseStream, long start, int length)
     {
         _baseStream = baseStream ?? throw new ArgumentNullException(nameof(baseStream));
+        StreamAccess.ValidateRange(baseStream, start, length);
+        _semaphore = StreamAccess.GetLock(baseStream);
         _start = start;
         _length = length;
         _position = 0;
@@ -28,27 +31,39 @@ internal class SubStream : Stream
     }
 
     public override int Read(byte[] buffer, int offset, int count)
-    {
-        var remaining = _length - _position;
-        if (remaining <= 0) return 0;
+        => Read(buffer.AsSpan(offset, count));
 
-        var toRead = (int)Math.Min(count, remaining);
-        _baseStream.Position = _start + _position;
-        var read = _baseStream.Read(buffer, offset, toRead);
-        _position += read;
-        return read;
+    public override int Read(Span<byte> buffer)
+    {
+        _semaphore.Wait();
+        try
+        {
+            var toRead = (int)Math.Min(buffer.Length, _length - _position);
+            if (toRead <= 0) return 0;
+            _baseStream.Position = _start + _position;
+            var read = _baseStream.Read(buffer[..toRead]);
+            _position += read;
+            return read;
+        }
+        finally { _semaphore.Release(); }
     }
 
-    public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-    {
-        var remaining = _length - _position;
-        if (remaining <= 0) return 0;
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-        var toRead = (int)Math.Min(count, remaining);
-        _baseStream.Position = _start + _position;
-        var read = await _baseStream.ReadAsync(buffer, offset, toRead, cancellationToken).ConfigureAwait(false);
-        _position += read;
-        return read;
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var toRead = (int)Math.Min(buffer.Length, _length - _position);
+            if (toRead <= 0) return 0;
+            _baseStream.Position = _start + _position;
+            var read = await _baseStream.ReadAsync(buffer[..toRead], cancellationToken).ConfigureAwait(false);
+            _position += read;
+            return read;
+        }
+        finally { _semaphore.Release(); }
     }
 
     public override long Seek(long offset, SeekOrigin origin)

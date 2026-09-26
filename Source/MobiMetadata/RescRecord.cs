@@ -18,6 +18,8 @@ public class RescRecord : PageRecord
 
     public async Task ParseAsync()
     {
+        _xmlContent = "";
+        PageCount = 0;
         var contentLength = DataLength - 4;
         var data = await ReadDataAsync(4, contentLength).ConfigureAwait(false);
 
@@ -43,6 +45,8 @@ public class RescRecord : PageRecord
             IgnoreProcessingInstructions = true,
             IgnoreWhitespace = true,
             ConformanceLevel = ConformanceLevel.Fragment,
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
             Async = true
         };
 
@@ -50,7 +54,7 @@ public class RescRecord : PageRecord
 
         while (reader.Read())
         {
-            if (reader.Name == "itemref")
+            if (reader.NodeType == XmlNodeType.Element && reader.LocalName == "itemref")
             {
                 var idRef = reader.GetAttribute("idref");
                 var skelId = reader.GetAttribute("skelid");
@@ -75,6 +79,8 @@ public class RescRecord : PageRecord
 
         using var reader = XmlReader.Create(new StringReader(_xmlContent), new XmlReaderSettings
         {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
             IgnoreComments = true,
             IgnoreProcessingInstructions = true,
             IgnoreWhitespace = true,

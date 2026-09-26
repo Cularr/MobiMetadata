@@ -9,10 +9,12 @@ public class MobiMetadata : IDisposable
     private readonly PalmDOCHead _palmDocHeader;
     private readonly MobiHead _mobiHeader;
     private readonly bool _requireExthHeader;
-    private readonly object _lock = new();
+    private readonly SemaphoreSlim _operationLock = new(1, 1);
 
     private Stream _stream = null!;
     private volatile bool _isInitialized;
+    private int _kf8RecordBase;
+    private uint _kf8FirstImageIndex = uint.MaxValue;
     private bool _disposed;
 
     public PDBHead PdbHeader => _pdbHeader;
@@ -30,8 +32,8 @@ public class MobiMetadata : IDisposable
     public IReadOnlyList<PageRecord> Images => _images;
     public PageRecord? Cover { get; private set; }
 
-    public bool IsKf8 => _mobiHeader.FileVersion >= 8;
-    public bool IsDualMobi => _mobiHeader.ExthHeader?.Kf8BoundaryOffset > 0;
+    public bool IsKf8 => _isInitialized && _mobiHeader.FileVersion == 8;
+    public bool IsDualMobi { get; private set; }
 
     public MobiMetadata(PDBHead? pdbHeader = null, PalmDOCHead? palmDocHeader = null, MobiHead? mobiHeader = null, bool requireExthHeader = false)
     {
@@ -63,75 +65,148 @@ public class MobiMetadata : IDisposable
     public async Task ReadMetadataAsync(Stream stream)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-
-        lock (_lock)
+        ArgumentNullException.ThrowIfNull(stream);
+        StreamAccess.ValidateRange(stream, 0, 0);
+        await _operationLock.WaitAsync().ConfigureAwait(false);
+        var gate = StreamAccess.GetLock(stream);
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
         {
+            ResetState();
             _stream = stream;
+            stream.Position = 0;
+            await _pdbHeader.ReadHeaderAsync(stream).ConfigureAwait(false);
+            if (!_pdbHeader.SkipProperties && (_pdbHeader.TypeName != "BOOK" || _pdbHeader.CreatorName != "MOBI"))
+                throw new MobiMetadataException("Unsupported ebook container: expected BOOK/MOBI (DRM-free MOBI or AZW3).");
+            _palmDocHeader.RecordEndPosition = _pdbHeader.FirstRecordEndPosition;
+            _mobiHeader.RecordEndPosition = _pdbHeader.FirstRecordEndPosition;
+            await _palmDocHeader.ReadHeaderAsync(stream).ConfigureAwait(false);
+            _mobiHeader.PreviousHeaderPosition = _palmDocHeader.StreamPosition;
+            await _mobiHeader.ReadHeaderAsync(stream).ConfigureAwait(false);
+            if (_mobiHeader.ExthHeader == null && _requireExthHeader)
+                throw new MobiMetadataException($"No EXTH header found in '{_mobiHeader.FullName}'");
+
+            var activeMobi = _mobiHeader;
+            var activePalm = _palmDocHeader;
+            int recordBase = 0;
+            uint boundary = _mobiHeader.ExthHeader?.Kf8BoundaryOffset ?? uint.MaxValue;
+            if (_mobiHeader.FileVersion != 8 && boundary != 0 && boundary != uint.MaxValue && !_pdbHeader.SkipRecords)
+            {
+                var records = _pdbHeader.Records;
+                if (boundary >= records.Length || boundary < 2 || records[boundary].DataOffset - (long)records[boundary - 1].DataOffset != 8)
+                    throw new MobiMetadataException("Invalid KF8 boundary record.");
+                stream.Position = records[boundary - 1].DataOffset;
+                var marker = new byte[8];
+                await stream.ReadExactlyAsync(marker).ConfigureAwait(false);
+                if (!marker.AsSpan().SequenceEqual("BOUNDARY"u8))
+                    throw new MobiMetadataException("Invalid KF8 boundary marker.");
+                recordBase = (int)boundary;
+                long end = boundary + 1 < records.Length ? records[boundary + 1].DataOffset : stream.Length;
+                stream.Position = records[boundary].DataOffset;
+                activePalm = new PalmDOCHead { RecordEndPosition = end };
+                activeMobi = new MobiHead { RecordEndPosition = end };
+                await activePalm.ReadHeaderAsync(stream).ConfigureAwait(false);
+                activeMobi.PreviousHeaderPosition = activePalm.StreamPosition;
+                await activeMobi.ReadHeaderAsync(stream).ConfigureAwait(false);
+                if (activeMobi.FileVersion != 8)
+                    throw new MobiMetadataException("KF8 boundary does not reference a version 8 header.");
+                IsDualMobi = true;
+                _kf8RecordBase = recordBase;
+                if (activeMobi.FirstImageIndex is > 0 and < uint.MaxValue)
+                {
+                    long firstImage = (long)recordBase + activeMobi.FirstImageIndex;
+                    if (firstImage > records.Length)
+                        throw new MobiMetadataException("KF8 image index is outside the record directory.");
+                    _kf8FirstImageIndex = (uint)firstImage;
+                }
+            }
+            if (!_pdbHeader.SkipRecords && !activePalm.SkipProperties && !activeMobi.SkipProperties)
+            {
+                TextContent = new TextContent(stream, _pdbHeader.Records, activePalm, activeMobi, recordBase + 1);
+                if (activeMobi.FileVersion == 8 || IsDualMobi)
+                    Kf8Parser = new KF8Parser(stream, _pdbHeader.Records, activeMobi, activeMobi.ExthHeader, recordBase);
+            }
+            _isInitialized = true;
         }
-
-        await _pdbHeader.ReadHeaderAsync(stream).ConfigureAwait(false);
-        await _palmDocHeader.ReadHeaderAsync(stream).ConfigureAwait(false);
-
-        _mobiHeader.PreviousHeaderPosition = _palmDocHeader.StreamPosition;
-        await _mobiHeader.ReadHeaderAsync(stream).ConfigureAwait(false);
-
-        if (_mobiHeader.ExthHeader == null && _requireExthHeader)
-            throw new MobiMetadataException($"No EXTH header found in '{_mobiHeader.FullName}'");
-
-        lock (_lock)
+        catch
         {
-            TextContent = new TextContent(_stream, _pdbHeader.Records, _palmDocHeader, _mobiHeader);
+            ResetState();
+            throw;
         }
-
-        if (IsKf8 || IsDualMobi)
+        finally
         {
-            Kf8Parser = new KF8Parser(stream, _pdbHeader.Records, _mobiHeader, _mobiHeader.ExthHeader);
+            gate.Release();
+            _operationLock.Release();
         }
+    }
 
-        _isInitialized = true;
+    private void ResetState()
+    {
+        _isInitialized = false;
+        IsDualMobi = false;
+        _kf8RecordBase = 0;
+        _kf8FirstImageIndex = uint.MaxValue;
+        TextContent = null;
+        Kf8Parser = null;
+        Navigation = null;
+        ClearImages();
+        _pdbHeader.ResetReadState();
+        _palmDocHeader.ResetReadState();
+        _mobiHeader.ResetReadState();
+    }
+
+    private void ClearImages()
+    {
+        PageRecords = null;
+        HdContainer = null;
+        Azw6Header = null;
+        Cover = null;
+        _images = [];
     }
 
     public async Task ParseKf8Async()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (Kf8Parser == null) return;
-
-        await Kf8Parser.ParseAsync().ConfigureAwait(false);
-
-        if (Kf8Parser.Ncx is { Count: > 0 })
+        await _operationLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            Navigation = new NcxNavigation(Kf8Parser.Ncx);
+            Navigation = null;
+            if (Kf8Parser == null) return;
+            await Kf8Parser.ParseAsync().ConfigureAwait(false);
+            if (Kf8Parser.Ncx is { Count: > 0 }) Navigation = new NcxNavigation(Kf8Parser.Ncx);
         }
+        finally { _operationLock.Release(); }
     }
 
     public async Task LoadImagesAsync(Stream? hdStream = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        EnsureInitialized();
-
-        var exthHeader = _mobiHeader.ExthHeader
-            ?? throw new MobiMetadataException($"Cannot load images: EXTH header is required but not available for '{_mobiHeader.FullName}'.");
-
-        PageRecords = new PageRecords(
-            _stream, _pdbHeader.Records, SdDataOffset,
-            _mobiHeader.FirstImageIndex, _mobiHeader.LastContentRecord,
-            exthHeader.CoverOffset, exthHeader.ThumbOffset);
-
-        await PageRecords.AnalyzeAsync().ConfigureAwait(false);
-
-        if (hdStream != null)
+        await _operationLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            await LoadHdContainerAsync(hdStream).ConfigureAwait(false);
-            await HdContainer!.AnalyzeHdAsync(PageRecords.Images.Count).ConfigureAwait(false);
-        }
+            EnsureInitialized();
+            ClearImages();
+            var exthHeader = _mobiHeader.ExthHeader;
+            var lastResource = IsDualMobi ? (ushort)(_kf8RecordBase - 2) : ushort.MaxValue;
+            (uint First, ushort Last)[] resourceRanges = IsDualMobi && _kf8FirstImageIndex != uint.MaxValue
+                ? [(_mobiHeader.FirstImageIndex, lastResource), (_kf8FirstImageIndex, ushort.MaxValue)]
+                : [(_mobiHeader.FirstImageIndex, lastResource)];
+            PageRecords = new PageRecords(
+                _stream, _pdbHeader.Records, SdDataOffset,
+                resourceRanges,
+                exthHeader?.CoverOffset ?? uint.MaxValue, exthHeader?.ThumbOffset ?? uint.MaxValue);
 
-        if (exthHeader.BookType != "comic")
-        {
-            await PageRecords.SeparateFontsAsync().ConfigureAwait(false);
+            await PageRecords.AnalyzeAsync().ConfigureAwait(false);
+            if (hdStream != null)
+            {
+                await LoadHdContainerAsync(hdStream).ConfigureAwait(false);
+                await HdContainer!.AnalyzeHdAsync(PageRecords.Images.Count).ConfigureAwait(false);
+            }
+            MergeImages();
         }
-
-        MergeImages();
+        catch { ClearImages(); throw; }
+        finally { _operationLock.Release(); }
     }
 
     private void EnsureInitialized()
@@ -145,31 +220,34 @@ public class MobiMetadata : IDisposable
         if (_mobiHeader.SkipProperties)
             throw new MobiMetadataException($"Cannot load images for '{_mobiHeader.FullName}': MOBI properties were skipped during reading.");
 
-        if (_mobiHeader.SkipExthHeader)
-            throw new MobiMetadataException($"Cannot load images for '{_mobiHeader.FullName}': EXTH header was skipped during reading.");
     }
 
     private async Task LoadHdContainerAsync(Stream hdStream)
     {
-        var exthHeader = _mobiHeader.ExthHeader
-            ?? throw new MobiMetadataException($"Cannot load HD container: EXTH header is required but not available.");
-
+        var exthHeader = _mobiHeader.ExthHeader;
         var hdPdb = new PDBHead();
-        await hdPdb.ReadHeaderAsync(hdStream).ConfigureAwait(false);
+        var gate = StreamAccess.GetLock(hdStream);
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            hdStream.Position = 0;
+            await hdPdb.ReadHeaderAsync(hdStream).ConfigureAwait(false);
 
-        if (!hdPdb.IsHdImageContainer)
-            throw new MobiMetadataException($"Invalid HD image container: expected RBIN/CONT format but got '{hdPdb.TypeName}/{hdPdb.CreatorName}'.");
+            if (!hdPdb.IsHdImageContainer)
+                throw new MobiMetadataException($"Invalid HD image container: expected RBIN/CONT format but got '{hdPdb.TypeName}/{hdPdb.CreatorName}'.");
 
-        Azw6Header = new Azw6Head(skipExthHeader: true);
-        await Azw6Header.ReadHeaderAsync(hdStream).ConfigureAwait(false);
+            Azw6Header = new Azw6Head(skipExthHeader: true) { RecordEndPosition = hdPdb.FirstRecordEndPosition };
+            await Azw6Header.ReadHeaderAsync(hdStream).ConfigureAwait(false);
 
-        if (Azw6Header.Title != _mobiHeader.FullName)
-            throw new MobiMetadataException($"HD container title mismatch: HD title '{Azw6Header.Title}' does not match book title '{_mobiHeader.FullName}'.");
+            if (Azw6Header.Title != _mobiHeader.FullName)
+                throw new MobiMetadataException($"HD container title mismatch: HD title '{Azw6Header.Title}' does not match book title '{_mobiHeader.FullName}'.");
+        }
+        finally { gate.Release(); }
 
         HdContainer = new PageRecords(
             hdStream, hdPdb.Records, HdDataOffset,
             1, (ushort)(hdPdb.Records.Length - 1),
-            exthHeader.CoverOffset, exthHeader.ThumbOffset);
+            exthHeader?.CoverOffset ?? uint.MaxValue, exthHeader?.ThumbOffset ?? uint.MaxValue);
     }
 
     private void MergeImages()
@@ -185,12 +263,13 @@ public class MobiMetadata : IDisposable
 
         var count = PageRecords?.Images.Count ?? 0;
         var mergedImages = new List<PageRecord>(count);
+        var hdImages = HdContainer?.Images.ToDictionary(r => r.ResourceIndex);
 
         for (int i = 0; i < count; i++)
         {
-            if (HdContainer != null && !HdContainer.Images[i].IsCresPlaceholder)
+            if (PageRecords != null && hdImages != null && hdImages.TryGetValue(PageRecords.Images[i].ResourceIndex, out var hd) && !hd.IsCresPlaceholder)
             {
-                mergedImages.Add(HdContainer.Images[i]);
+                mergedImages.Add(hd);
             }
             else if (PageRecords != null)
             {
@@ -200,16 +279,15 @@ public class MobiMetadata : IDisposable
 
         _images = mergedImages;
 
-        var rescPageCount = PageRecords?.Resc?.PageCount ?? 0;
-        if (rescPageCount > 0 && _images.Count != rescPageCount)
-        {
-            throw new MobiMetadataException($"Image count mismatch in '{_mobiHeader.FullName}': found {_images.Count} images but RESC specifies {rescPageCount} pages.");
-        }
     }
 
-    public bool HasHdCover() => HdContainer?.Cover != null;
+    public bool HasHdCover() => HdContainer?.Cover is { IsCresPlaceholder: false };
     public bool HasSdCover() => PageRecords?.Cover != null;
-    public bool IsHdImage(int index) => HdContainer != null && !HdContainer.Images[index].IsCresPlaceholder;
+    public bool IsHdImage(int index)
+    {
+        if ((uint)index >= _images.Count) throw new ArgumentOutOfRangeException(nameof(index));
+        return HdContainer != null && HdContainer.Images.Contains(_images[index]);
+    }
 
     public int PageCount => PageRecords?.PageCount ?? 0;
 
@@ -219,7 +297,8 @@ public class MobiMetadata : IDisposable
 
         if (PageRecords == null)
             throw new MobiMetadataException($"Cannot get image bytes: call {nameof(LoadImagesAsync)} first.");
-        return await PageRecords.GetImageBytesAsync(pageIndex).ConfigureAwait(false);
+        if ((uint)pageIndex >= _images.Count) throw new ArgumentOutOfRangeException(nameof(pageIndex));
+        return await _images[pageIndex].GetImageBytesAsync().ConfigureAwait(false);
     }
 
     public Stream OpenImageStream(int pageIndex)
@@ -228,7 +307,8 @@ public class MobiMetadata : IDisposable
 
         if (PageRecords == null)
             throw new MobiMetadataException($"Cannot open image stream: call {nameof(LoadImagesAsync)} first.");
-        return PageRecords.OpenImageStream(pageIndex);
+        if ((uint)pageIndex >= _images.Count) throw new ArgumentOutOfRangeException(nameof(pageIndex));
+        return _images[pageIndex].OpenImageStream();
     }
 
     public async Task<byte[]?> GetCoverBytesAsync()

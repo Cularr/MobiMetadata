@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Text;
 
 namespace MobiMetadata;
@@ -19,17 +18,21 @@ public class PageRecord
 
     public PageRecord(Stream stream, long position, uint length, int dataOffset = 0, SemaphoreSlim? semaphore = null)
     {
+        StreamAccess.ValidateRange(stream, position, length);
+        if (length > int.MaxValue || dataOffset < 0 || (dataOffset > length && !(length == 4 && dataOffset == 12)))
+            throw new MobiMetadataException("Invalid image record length or payload offset.");
         _stream = stream;
         _position = position;
         _length = (int)length;
         _dataOffset = dataOffset;
-        _semaphore = semaphore ?? new SemaphoreSlim(1, 1);
+        _semaphore = StreamAccess.GetLock(stream, semaphore);
     }
 
     public int Size => _length;
+    internal uint ResourceIndex { get; set; }
     protected int DataLength => _length;
 
-    public bool IsCresPlaceholder => _length == 4;
+    public bool IsCresPlaceholder => _dataOffset == 12 && _length == 4;
 
     public async Task<bool> IsCresAsync() => await MatchSignatureAsync(CRES).ConfigureAwait(false);
     public async Task<bool> IsDatpAsync() => await MatchSignatureAsync(DATP).ConfigureAwait(false);
@@ -46,12 +49,35 @@ public class PageRecord
 
     public async Task<bool> IsStructuralAsync()
     {
-        foreach (var signature in new[] { "FDST", "FLIS", "FCIS", "INDX", "DATP" })
+        foreach (var signature in new[] { "FDST", "FLIS", "FCIS", "INDX", "DATP", "SRCS", "BOUNDARY", "AUDI", "VIDE", "HUFF", "CDIC" })
         {
             if (await MatchSignatureAsync(Encoding.ASCII.GetBytes(signature)).ConfigureAwait(false))
                 return true;
         }
         return _length < 4 || await MatchSignatureAsync(new byte[] { 0xe9, 0x8e, 0x0d, 0x0a }).ConfigureAwait(false);
+    }
+
+    public async Task<bool> IsImageAsync()
+    {
+        if (IsCresPlaceholder || _length <= _dataOffset) return false;
+        var prefix = new byte[Math.Min(12, _length - _dataOffset)];
+        await StreamAccess.ReadExactlyAtAsync(_stream, _position + _dataOffset, prefix).ConfigureAwait(false);
+        return IsImageSignature(prefix);
+    }
+
+    private static bool IsImageSignature(ReadOnlySpan<byte> bytes) =>
+        bytes.StartsWith(new byte[] { 0xff, 0xd8, 0xff }) ||
+        bytes.StartsWith(new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }) ||
+        bytes.StartsWith("GIF87a"u8) || bytes.StartsWith("GIF89a"u8) || bytes.StartsWith("BM"u8) ||
+        bytes.StartsWith(new byte[] { 0x49, 0x49, 0x2a, 0 }) ||
+        bytes.StartsWith(new byte[] { 0x49, 0x49, 0xbc, 0x01 }) || // JPEG XR in HD containers
+        bytes.StartsWith(new byte[] { 0x4d, 0x4d, 0, 0x2a }) ||
+        (bytes.Length >= 12 && bytes.StartsWith("RIFF"u8) && bytes[8..].StartsWith("WEBP"u8));
+
+    private static void ValidateAllocation(int length)
+    {
+        if (length < 0 || length > StreamAccess.MaxRecordLength)
+            throw new MobiMetadataException("Record exceeds the supported allocation limit; use a stream for large images.");
     }
 
     private async Task<bool> MatchSignatureAsync(byte[] signature)
@@ -73,6 +99,7 @@ public class PageRecord
 
     public byte[] ReadData()
     {
+        ValidateAllocation(_length);
         _semaphore.Wait();
         try
         {
@@ -89,6 +116,7 @@ public class PageRecord
 
     public async Task<byte[]> ReadDataAsync()
     {
+        ValidateAllocation(_length);
         await _semaphore.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -105,6 +133,9 @@ public class PageRecord
 
     protected async Task<Memory<byte>> ReadDataAsync(int offset, int length)
     {
+        if (offset < 0 || offset > _length || length < 0 || length > _length - offset)
+            throw new MobiMetadataException("Requested data exceeds its record.");
+        ValidateAllocation(length);
         var buffer = new byte[length];
         await _semaphore.WaitAsync().ConfigureAwait(false);
         try
@@ -122,6 +153,7 @@ public class PageRecord
     public byte[] GetImageBytes()
     {
         var dataLength = _length - _dataOffset;
+        ValidateAllocation(dataLength);
         var buffer = new byte[dataLength];
         
         _semaphore.Wait();
@@ -140,6 +172,7 @@ public class PageRecord
     public async Task<byte[]> GetImageBytesAsync()
     {
         var dataLength = _length - _dataOffset;
+        ValidateAllocation(dataLength);
         var buffer = new byte[dataLength];
         
         await _semaphore.WaitAsync().ConfigureAwait(false);
@@ -157,15 +190,8 @@ public class PageRecord
 
     public Stream OpenImageStream()
     {
-        _semaphore.Wait();
-        try
-        {
-            _stream.Position = _position + _dataOffset;
-            return new SubStream(_stream, _position + _dataOffset, _length - _dataOffset);
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
+        if (IsCresPlaceholder)
+            throw new MobiMetadataException("A CRES placeholder has no image payload.");
+        return new SubStream(_stream, _position + _dataOffset, _length - _dataOffset);
     }
 }
