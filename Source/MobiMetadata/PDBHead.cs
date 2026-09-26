@@ -17,7 +17,6 @@ public class PDBHead : BaseHead
     private static readonly Attr _uniqueIdSeed = new(4, _attrs);
     private static readonly Attr _nextRecordListId = new(4, _attrs);
     private static readonly Attr _numRecords = new(2);
-    private static readonly Attr _gapToData = new(2);
 
     private PDBRecordInfo[] _records = [];
     private Memory<byte> _numRecordsData;
@@ -30,33 +29,41 @@ public class PDBHead : BaseHead
         SkipRecords = skipRecords;
     }
 
+    internal long FirstRecordEndPosition { get; private set; }
+    internal override void ResetReadState()
+    {
+        base.ResetReadState();
+        _records = [];
+        _numRecordsData = Memory<byte>.Empty;
+        FirstRecordEndPosition = 0;
+    }
+
     public override async Task ReadHeaderAsync(Stream stream)
     {
-        await SkipOrReadHeaderDataAsync(stream, _attrs.Sum(a => a.Length)).ConfigureAwait(false);
-
-        _numRecordsData = new byte[_numRecords.Length];
-        await stream.ReadAsync(_numRecordsData).ConfigureAwait(false);
-
-        var recordCount = NumRecords;
-        var recordDataSize = recordCount * PDBRecordInfo.RecordSize;
-
-        if (SkipRecords)
+        ResetReadState();
+        await SkipOrReadHeaderDataAsync(stream, 76).ConfigureAwait(false);
+        _numRecordsData = new byte[2];
+        await ReadExactlyAsync(stream, _numRecordsData).ConfigureAwait(false);
+        int count = NumRecords;
+        if (count == 0) throw new MobiMetadataException("PDB contains no records");
+        int size = count * PDBRecordInfo.RecordSize;
+        ValidateRange(stream, stream.Position, size);
+        var data = new byte[size];
+        await ReadExactlyAsync(stream, data).ConfigureAwait(false);
+        var records = new PDBRecordInfo[count];
+        long directoryEnd = stream.Position;
+        long previous = directoryEnd;
+        for (int i = 0; i < count; i++)
         {
-            stream.Position += recordDataSize;
+            var record = new PDBRecordInfo(data, i * PDBRecordInfo.RecordSize);
+            if (record.DataOffset < previous || record.DataOffset > stream.Length)
+                throw new MobiMetadataException("Invalid PDB record offset");
+            records[i] = record;
+            previous = record.DataOffset;
         }
-        else
-        {
-            var recordData = new byte[recordDataSize];
-            await stream.ReadAsync(recordData).ConfigureAwait(false);
-
-            _records = new PDBRecordInfo[recordCount];
-            for (int i = 0; i < recordCount; i++)
-            {
-                _records[i] = new PDBRecordInfo(recordData, i * PDBRecordInfo.RecordSize);
-            }
-        }
-
-        stream.Position += _gapToData.Length;
+        FirstRecordEndPosition = count > 1 ? records[1].DataOffset : stream.Length;
+        _records = SkipRecords ? [] : records;
+        stream.Position = records[0].DataOffset;
     }
 
     public string Name => GetPropAsUtf8Trimmed(_name);

@@ -31,34 +31,40 @@ public class Azw6Head : BaseHead
         SkipExthHeader = skipExthHeader;
     }
 
-    public override async Task ReadHeaderAsync(Stream stream)
+    internal override void ResetReadState()
     {
-        await SkipOrReadHeaderDataAsync(stream, _attrs.Sum(a => a.Length)).ConfigureAwait(false);
-
-        if (!SkipExthHeader)
-        {
-            ExthHeader = new EXTHHead();
-            await ExthHeader.ReadHeaderAsync(stream).ConfigureAwait(false);
-        }
-
-        await ReadTitleAsync(stream).ConfigureAwait(false);
+        base.ResetReadState();
+        _titleData = Memory<byte>.Empty;
+        ExthHeader = null;
     }
 
-    private async Task ReadTitleAsync(Stream stream)
+    public override async Task ReadHeaderAsync(Stream stream)
     {
-        var headerSize = HeaderData.Length;
-        if (ExthHeader != null)
-            headerSize += (int)ExthHeader.HeaderLength;
-
-        stream.Position += TitleOffset - headerSize;
-
-        _titleData = new byte[(int)TitleLength];
-        await stream.ReadAsync(_titleData).ConfigureAwait(false);
+        ResetReadState();
+        long start = stream.Position;
+        await SkipOrReadHeaderDataAsync(stream, 48).ConfigureAwait(false);
+        if (Identifier != "CONT") throw new MobiMetadataException("Invalid AZW6 header identifier");
+        if (HeaderLength < 48) throw new MobiMetadataException("Invalid AZW6 header length");
+        ValidateRange(stream, start, HeaderLength);
+        // CONT uses a fixed 48-byte prefix; its length field is the record size.
+        if (!SkipExthHeader)
+        {
+            var exth = new EXTHHead { RecordEndPosition = RecordEndPosition, TextEncoding = Codepage };
+            await exth.ReadHeaderAsync(stream).ConfigureAwait(false);
+            ExthHeader = exth;
+        }
+        if (!SkipProperties && TitleLength != 0)
+        {
+            ValidateRange(stream, start + TitleOffset, TitleLength);
+            stream.Position = start + TitleOffset;
+            _titleData = new byte[(int)TitleLength];
+            await ReadExactlyAsync(stream, _titleData).ConfigureAwait(false);
+        }
     }
 
     public string Identifier => GetPropAsUtf8Trimmed(_identifier);
     public uint HeaderLength => GetPropAsUint(_headerLength);
-    public string Title => Encoding.UTF8.GetString(_titleData.Span);
+    public string Title => MobiEncoding.GetEncoding(Codepage).GetString(_titleData.Span);
     public uint TitleOffset => GetPropAsUint(_titleOffset);
     public uint TitleLength => GetPropAsUint(_titleLength);
     public uint Codepage => GetPropAsUint(_codepage);

@@ -11,28 +11,37 @@ public class EXTHHead : BaseHead
 
     private EXTHRecord[] _records = [];
 
+    public uint TextEncoding { get; set; } = 65001;
+    public IReadOnlyList<EXTHRecord> Records => Array.AsReadOnly(_records);
+
+    internal override void ResetReadState()
+    {
+        base.ResetReadState();
+        _records = [];
+    }
+
     public override async Task ReadHeaderAsync(Stream stream)
     {
-        int attrLen = _attrs.Sum(a => a.Length);
-        await SkipOrReadHeaderDataAsync(stream, attrLen).ConfigureAwait(false);
-
+        ResetReadState();
+        long start = stream.Position;
+        await SkipOrReadHeaderDataAsync(stream, 12).ConfigureAwait(false);
         if (Identifier != "EXTH")
-        {
             throw new MobiMetadataException("Invalid EXTH header: expected 'EXTH' identifier");
-        }
-
-        byte[] recordsData = new byte[HeaderLength - attrLen];
-        await stream.ReadAsync(recordsData).ConfigureAwait(false);
-
-        _records = new EXTHRecord[RecordCount];
+        uint length = HeaderLength;
+        if (length < 12 || RecordCount > (length - 12) / 8)
+            throw new MobiMetadataException("Invalid EXTH length or record count");
+        ValidateRange(stream, start, length);
+        byte[] data = new byte[(int)length - 12];
+        await ReadExactlyAsync(stream, data).ConfigureAwait(false);
+        var records = new EXTHRecord[(int)RecordCount];
         int position = 0;
-
-        for (int i = 0; i < RecordCount; i++)
+        for (int i = 0; i < records.Length; i++)
         {
-            EXTHRecord record = new EXTHRecord(recordsData, position);
-            _records[i] = record;
+            var record = new EXTHRecord(data, position);
+            records[i] = record;
             position += record.TotalSize;
         }
+        _records = records;
     }
 
     // Header properties
@@ -40,25 +49,23 @@ public class EXTHHead : BaseHead
     public uint HeaderLength => GetPropAsUint(_headerLength);
     public uint RecordCount => GetPropAsUint(_recordCount);
 
-    public int Size
-    {
-        get
-        {
-            int dataSize = _records.Sum(r => r.TotalSize);
-            return 12 + dataSize + GetPadding(dataSize);
-        }
-    }
+    public int Size => checked((int)HeaderLength);
 
-    private static int GetPadding(int dataSize)
+    // Single-value accessors remain compatible; collection accessors preserve repeats.
+    private string GetString(uint type) => FindRecord(type) is { } r ? MobiEncoding.GetEncoding(TextEncoding).GetString(r.RecordData.Span) : "";
+    private uint GetUint(uint type)
     {
-        int remainder = dataSize % 4;
-        return remainder == 0 ? 0 : 4 - remainder;
+        var record = FindRecord(type);
+        if (record is null) return uint.MaxValue;
+        if (record.DataLength != 4) throw new MobiMetadataException($"Invalid EXTH integer record {type}");
+        return Converter.ToUInt32(record.RecordData.Span);
     }
-
-    // Record accessors
-    private string GetString(uint type) => FindRecord(type) is { } r ? Encoding.UTF8.GetString(r.RecordData.Span) : "";
-    private uint GetUint(uint type) => FindRecord(type) is { } r ? Converter.ToUInt32(r.RecordData.Span) : uint.MaxValue;
     private EXTHRecord? FindRecord(uint type) => Array.Find(_records, r => r.RecordType == type);
+    public IReadOnlyList<string> GetStrings(uint type) => _records.Where(r => r.RecordType == type)
+        .Select(r => MobiEncoding.GetEncoding(TextEncoding).GetString(r.RecordData.Span)).ToArray();
+    public IReadOnlyList<string> Authors => GetStrings(100);
+    public IReadOnlyList<string> Subjects => GetStrings(105);
+    public IReadOnlyList<string> Contributors => GetStrings(108);
 
     // Standard metadata (type 100+)
     public string Author => GetString(100);

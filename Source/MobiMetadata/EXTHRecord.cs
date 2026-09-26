@@ -10,9 +10,12 @@ public sealed class EXTHRecord(Memory<byte> data, int position) : BaseRecord(dat
 
     private static int ValidateAndGetLength(Memory<byte> data, int position)
     {
-        int length = (int)Converter.ToUInt32(data.Slice(position + _lengthOffset, 4).Span);
-        if (length < 8)
-            throw new MobiMetadataException("Invalid EXTH record: length < 8");
+        if (position < 0 || position > data.Length - 8)
+            throw new MobiMetadataException("Truncated EXTH record header");
+        uint declared = Converter.ToUInt32(data.Slice(position + _lengthOffset, 4).Span);
+        if (declared < 8 || declared > data.Length - position)
+            throw new MobiMetadataException("Invalid EXTH record length");
+        int length = (int)declared;
         return length - 8;
     }
 

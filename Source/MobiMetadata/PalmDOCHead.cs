@@ -23,8 +23,15 @@ public class PalmDOCHead : BaseHead
         SkipRecords = skipRecords;
     }
 
+    internal override void ResetReadState()
+    {
+        base.ResetReadState();
+        StreamPosition = 0;
+    }
+
     public override async Task ReadHeaderAsync(Stream stream)
     {
+        ResetReadState();
         StreamPosition = stream.Position;
         await SkipOrReadHeaderDataAsync(stream, _attrs.Sum(a => a.Length)).ConfigureAwait(false);
     }

@@ -71,45 +71,53 @@ public class MobiHead : BaseHead
         }
     }
 
+    internal override void ResetReadState()
+    {
+        base.ResetReadState();
+        _fullNameData = Memory<byte>.Empty;
+        ExthHeader = null;
+    }
+
     public override async Task ReadHeaderAsync(Stream stream)
     {
-        var headerOffset = stream.Position;
-
-        var headerLength = _attrs.Sum(a => a.Length);
-        _headerData = new byte[headerLength];
-        await stream.ReadAsync(_headerData).ConfigureAwait(false);
-
+        ResetReadState();
+        long headerOffset = stream.Position;
+        await SkipOrReadHeaderDataAsync(stream, 8).ConfigureAwait(false);
         if (Identifier != "MOBI")
-        {
             throw new MobiMetadataException("Invalid MOBI header: expected 'MOBI' identifier");
-        }
-
-        if (!SkipExthHeader)
+        uint length = HeaderLength;
+        if (length < 116) throw new MobiMetadataException("MOBI header is too short");
+        ValidateRange(stream, headerOffset, length);
+        var data = new byte[(int)length];
+        _headerData.CopyTo(data);
+        await ReadExactlyAsync(stream, data.AsMemory(8)).ConfigureAwait(false);
+        _headerData = data;
+        if (!SkipExthHeader && HasExthHeader)
         {
-            await ReadExthHeaderAsync(stream, headerOffset).ConfigureAwait(false);
+            var exth = new EXTHHead { RecordEndPosition = RecordEndPosition, TextEncoding = TextEncoding };
+            await exth.ReadHeaderAsync(stream).ConfigureAwait(false);
+            ExthHeader = exth;
         }
-
-        if (!SkipProperties)
+        if (!SkipProperties && FullNameLength != 0)
         {
-            await ReadFullNameAsync(stream).ConfigureAwait(false);
+            long position = PreviousHeaderPosition + FullNameOffset;
+            ValidateRange(stream, position, FullNameLength);
+            stream.Position = position;
+            _fullNameData = new byte[(int)FullNameLength];
+            await ReadExactlyAsync(stream, _fullNameData).ConfigureAwait(false);
         }
     }
 
-    private async Task ReadExthHeaderAsync(Stream stream, long headerOffset)
-    {
-        if (!HasExthHeader) return;
+    private uint OptionalUint(int offset, uint missing = uint.MaxValue) =>
+        _headerData.Length >= offset + 4 ? Converter.ToUInt32(_headerData.Span.Slice(offset, 4)) : missing;
 
-        stream.Position = headerOffset + HeaderLength;
-        ExthHeader = new EXTHHead();
-        await ExthHeader.ReadHeaderAsync(stream).ConfigureAwait(false);
-    }
-
-    private async Task ReadFullNameAsync(Stream stream)
-    {
-        stream.Position = PreviousHeaderPosition + FullNameOffset;
-        _fullNameData = new byte[(int)FullNameLength];
-        await stream.ReadAsync(_fullNameData).ConfigureAwait(false);
-    }
+    public ushort ExtraDataFlags => _headerData.Length >= 0xe4
+        ? Converter.ToUInt16(_headerData.Span.Slice(0xe2, 2)) : (ushort)0;
+    public uint NcxIndex => OptionalUint(0xe4);
+    public uint FragmentIndex => FileVersion == 8 ? OptionalUint(0xe8) : uint.MaxValue;
+    public uint SkeletonIndex => FileVersion == 8 ? OptionalUint(0xec) : uint.MaxValue;
+    public uint FdstCount => FileVersion == 8 ? OptionalUint(0xb4, 0) : 0;
+    public uint FdstIndex => FdstCount > 1 ? OptionalUint(0xb0) : uint.MaxValue;
 
     public string Identifier => GetPropAsUtf8Trimmed(_identifier);
     public uint HeaderLength => GetPropAsUint(_headerLength);
@@ -142,7 +150,7 @@ public class MobiHead : BaseHead
     public uint UniqueId => GetPropAsUint(_uniqueId);
     public uint FileVersion => GetPropAsUint(_fileVersion);
 
-    public string FullName => Encoding.UTF8.GetString(_fullNameData.Span);
+    public string FullName => MobiEncoding.GetEncoding(TextEncoding).GetString(_fullNameData.Span);
 
     public uint OrthographicIndex => GetPropAsUint(_orthographicIndex);
     public uint InflectionIndex => GetPropAsUint(_inflectionIndex);
@@ -170,13 +178,13 @@ public class MobiHead : BaseHead
     public uint HuffmanTableLength => GetPropAsUint(_huffmanTableLength);
     public bool HasHuffCdic => HuffmanRecordCount > 0;
 
-    public ushort FirstContentRecord => GetPropAsUshort(_firstContentRecord);
-    public ushort LastContentRecord => GetPropAsUshort(_lastContentRecord);
+    public ushort FirstContentRecord => _headerData.Length >= 178 ? GetPropAsUshort(_firstContentRecord) : (ushort)0;
+    public ushort LastContentRecord => _headerData.Length >= 180 ? GetPropAsUshort(_lastContentRecord) : ushort.MaxValue;
 
-    public uint DrmOffset => GetPropAsUint(_drmOffset);
-    public uint DrmCount => GetPropAsUint(_drmCount);
-    public uint DrmSize => GetPropAsUint(_drmSize);
-    public uint DrmFlags => GetPropAsUint(_drmFlags);
+    public uint DrmOffset => OptionalUint(_drmOffset.Position, 0);
+    public uint DrmCount => OptionalUint(_drmCount.Position, 0);
+    public uint DrmSize => OptionalUint(_drmSize.Position, 0);
+    public uint DrmFlags => OptionalUint(_drmFlags.Position, 0);
     public bool HasDrm => DrmOffset != 0 && DrmCount != 0;
 
     public uint ExthFlags => GetPropAsUint(_exthFlags);
