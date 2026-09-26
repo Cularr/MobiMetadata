@@ -68,17 +68,25 @@ public class HuffCdicDecompressor
 
     public byte[] Decompress(ReadOnlySpan<byte> input, int outputLength)
     {
+        long remainingWork = 16_000_000;
+        return Decompress(input, outputLength, ref remainingWork);
+    }
+
+    internal byte[] Decompress(ReadOnlySpan<byte> input, int outputLength, ref long remainingWork)
+    {
         if (!_initialized) throw new MobiMetadataException("HUFF/CDIC not initialized");
         if (outputLength < 0 || outputLength > MaximumBytes || input.Length > MaximumBytes)
             throw new MobiMetadataException("HUFF/CDIC size limit exceeded");
         using var output = new MemoryStream(Math.Min(outputLength, 65536));
         var active = new HashSet<int>();
-        var work = 16_000_000;
-        Expand(input, output, outputLength, active, ref work);
+        var work = Math.Min(16_000_000L, remainingWork);
+        var initialWork = work;
+        try { Expand(input, output, outputLength, active, ref work); }
+        finally { remainingWork -= initialWork - work; }
         return output.ToArray();
     }
 
-    private void Expand(ReadOnlySpan<byte> input, MemoryStream output, int limit, HashSet<int> active, ref int work)
+    private void Expand(ReadOnlySpan<byte> input, MemoryStream output, int limit, HashSet<int> active, ref long work)
     {
         var bit = 0;
         while (bit < input.Length * 8)
@@ -121,4 +129,3 @@ public class HuffCdicDecompressor
     public Task<byte[]> DecompressAsync(Memory<byte> input, int outputLength)
         => Task.Run(() => Decompress(input.Span, outputLength));
 }
-

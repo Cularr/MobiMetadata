@@ -5,8 +5,13 @@ public class TextContent
     private const int MaximumTextBytes = 256 * 1024 * 1024;
     private readonly Stream _stream;
     private readonly PDBRecordInfo[] _records;
-    private readonly PalmDOCHead _palmDocHeader;
-    private readonly MobiHead _mobiHeader;
+    private readonly ushort _compression;
+    private readonly ushort _encryptionType;
+    private readonly ushort _recordSize;
+    private readonly ushort _extraDataFlags;
+    private readonly uint _textEncoding;
+    private readonly uint _huffmanRecordOffset;
+    private readonly uint _huffmanRecordCount;
     private readonly int _firstTextRecord;
     private HuffCdicDecompressor? _huffCdic;
 
@@ -17,56 +22,70 @@ public class TextContent
     {
         _stream = stream;
         _records = records;
-        _palmDocHeader = palmDocHeader;
-        _mobiHeader = mobiHeader;
+        _compression = palmDocHeader.Compression;
+        _encryptionType = palmDocHeader.EncryptionType;
+        _recordSize = palmDocHeader.RecordSize;
+        _extraDataFlags = mobiHeader.ExtraDataFlags;
+        _textEncoding = mobiHeader.TextEncoding;
+        _huffmanRecordOffset = mobiHeader.HuffmanRecordOffset;
+        _huffmanRecordCount = mobiHeader.HuffmanRecordCount;
+        CompressionName = palmDocHeader.CompressionName;
+        TextEncoding = mobiHeader.TextEncodingName;
+        TextLength = palmDocHeader.TextLength;
+        RecordCount = palmDocHeader.RecordCount;
         _firstTextRecord = firstTextRecord;
     }
 
-    public string CompressionName => _palmDocHeader.CompressionName;
-    public string TextEncoding => _mobiHeader.TextEncodingName;
-    public uint TextLength => _palmDocHeader.TextLength;
-    public ushort RecordCount => _palmDocHeader.RecordCount;
+    public string CompressionName { get; }
+    public string TextEncoding { get; }
+    public uint TextLength { get; }
+    public ushort RecordCount { get; }
 
     public async Task InitializeHuffCdicAsync()
     {
-        if (_palmDocHeader.Compression != PalmDOCHead.CompressionHuffCdic) return;
-        var offset = (long)_firstTextRecord - 1 + _mobiHeader.HuffmanRecordOffset;
+        if (_compression != PalmDOCHead.CompressionHuffCdic) return;
+        var offset = (long)_firstTextRecord - 1 + _huffmanRecordOffset;
         if (offset < 0 || offset > uint.MaxValue) throw new MobiMetadataException("Invalid HUFF record offset");
         var decoder = new HuffCdicDecompressor();
-        await decoder.ReadRecordsAsync(_stream, _records, (uint)offset, _mobiHeader.HuffmanRecordCount).ConfigureAwait(false);
+        await decoder.ReadRecordsAsync(_stream, _records, (uint)offset, _huffmanRecordCount).ConfigureAwait(false);
         _huffCdic = decoder;
     }
 
     public async Task<string> ExtractTextAsync()
     {
-        if (_palmDocHeader.EncryptionType != 0) throw new MobiMetadataException("Encrypted MOBI text is not supported");
+        if (_encryptionType != 0) throw new MobiMetadataException("Encrypted MOBI text is not supported");
         if (TextLength > MaximumTextBytes) throw new MobiMetadataException("Text extraction size limit exceeded");
         if (_firstTextRecord < 0 || _firstTextRecord > _records.Length || RecordCount > _records.Length - _firstTextRecord)
             throw new MobiMetadataException("Invalid text record range");
-        if (_palmDocHeader.RecordSize == 0 && RecordCount != 0) throw new MobiMetadataException("Invalid text record size");
-        if (_palmDocHeader.Compression == PalmDOCHead.CompressionHuffCdic && _huffCdic == null)
+        if (_recordSize == 0 && RecordCount != 0) throw new MobiMetadataException("Invalid text record size");
+        if (_compression == PalmDOCHead.CompressionHuffCdic && _huffCdic == null)
             await InitializeHuffCdicAsync().ConfigureAwait(false);
 
+        // One budget covers the entire extraction, including recursive dictionary expansion.
+        long remainingHuffmanWork = 16_000_000L;
         using var output = new MemoryStream((int)Math.Min(TextLength, 65536));
         for (var i = 0; i < RecordCount; i++)
         {
             var record = await StreamAccess.ReadRecordAsync(_stream, _records, _firstTextRecord + i).ConfigureAwait(false);
-            var payloadLength = GetPayloadLength(record, _mobiHeader.ExtraDataFlags);
-            var data = _palmDocHeader.Compression switch
+            var payloadLength = GetPayloadLength(record, _extraDataFlags);
+            var data = _compression switch
             {
                 PalmDOCHead.CompressionNone => record.AsSpan(0, payloadLength).ToArray(),
-                PalmDOCHead.CompressionPalmDoc => PalmDocDecompressor.Decompress(record.AsSpan(0, payloadLength), _palmDocHeader.RecordSize),
-                PalmDOCHead.CompressionHuffCdic => _huffCdic!.Decompress(record.AsSpan(0, payloadLength), _palmDocHeader.RecordSize),
-                _ => throw new MobiMetadataException($"Unknown compression: {_palmDocHeader.Compression}")
+                PalmDOCHead.CompressionPalmDoc => PalmDocDecompressor.Decompress(record.AsSpan(0, payloadLength), _recordSize),
+                PalmDOCHead.CompressionHuffCdic => _huffCdic!.Decompress(record.AsSpan(0, payloadLength), _recordSize, ref remainingHuffmanWork),
+                _ => throw new MobiMetadataException($"Unknown compression: {_compression}")
             };
-            if (data.Length > _palmDocHeader.RecordSize) throw new MobiMetadataException("Text record exceeds declared size");
+            if (data.Length > _recordSize) throw new MobiMetadataException("Text record exceeds declared size");
             var remaining = (int)(TextLength - output.Length);
             if (data.Length > remaining && i != RecordCount - 1)
                 throw new MobiMetadataException("Text exceeds declared length before final record");
-            output.Write(data, 0, Math.Min(data.Length, remaining));
+            var written = Math.Min(data.Length, remaining);
+            output.Write(data, 0, written);
+            // Earn further work only from actual output, never from an untrusted length claim.
+            remainingHuffmanWork += 4L * written;
         }
         if (output.Length != TextLength) throw new MobiMetadataException("Text is shorter than its declared length");
-        return MobiEncoding.GetEncoding(_mobiHeader.TextEncoding).GetString(output.GetBuffer(), 0, (int)output.Length);
+        return MobiEncoding.GetEncoding(_textEncoding).GetString(output.GetBuffer(), 0, (int)output.Length);
     }
 
     private static int GetPayloadLength(ReadOnlySpan<byte> record, ushort flags)
@@ -99,4 +118,3 @@ public class TextContent
         return end;
     }
 }
-
