@@ -1,4 +1,4 @@
-using System.Text;
+using System.Globalization;
 
 namespace MobiMetadata;
 
@@ -57,9 +57,15 @@ public class EXTHHead : BaseHead
     {
         var record = FindRecord(type);
         if (record is null) return uint.MaxValue;
-        if (record.DataLength != 4) throw new MobiMetadataException($"Invalid EXTH integer record {type}");
-        return Converter.ToUInt32(record.RecordData.Span);
+        return record.DataLength switch
+        {
+            1 => record.RecordData.Span[0],
+            2 => Converter.ToUInt16(record.RecordData.Span),
+            4 => Converter.ToUInt32(record.RecordData.Span),
+            _ => throw new MobiMetadataException($"Invalid EXTH integer record {type}")
+        };
     }
+    private string GetHex(uint type) => FindRecord(type) is { } r ? Convert.ToHexString(r.RecordData.Span) : "";
     private EXTHRecord? FindRecord(uint type) => Array.Find(_records, r => r.RecordType == type);
     public IReadOnlyList<string> GetStrings(uint type) => _records.Where(r => r.RecordType == type)
         .Select(r => MobiEncoding.GetEncoding(TextEncoding).GetString(r.RecordData.Span)).ToArray();
@@ -82,7 +88,8 @@ public class EXTHHead : BaseHead
     public string Type => GetString(111);
     public string Source => GetString(112);
     public string Asin => GetString(113);
-    public string VersionNumber => GetString(114);
+    public uint? NumericVersionNumber => FindRecord(114) is null ? null : GetUint(114);
+    public string VersionNumber => NumericVersionNumber?.ToString(CultureInfo.InvariantCulture) ?? "";
     public uint Sample => GetUint(115);
     public uint StartOffset => GetUint(116);
     public string Adult => GetString(117);
@@ -98,7 +105,8 @@ public class EXTHHead : BaseHead
     public string OriginalResolution => GetString(126);
     public string ZeroGutter => GetString(127);
     public string ZeroMargin => GetString(128);
-    public string MastheadCoverImage => GetString(129);
+    public string MetadataResourceUri => GetString(129);
+    public string MastheadCoverImage => MetadataResourceUri;
     public uint RescOffset => GetUint(131);
 
     // Dictionary (type 200+)
@@ -145,9 +153,11 @@ public class EXTHHead : BaseHead
     // Container (type 538+)
     public string InputSourceType => GetString(534);
     public string CreatorBuildString => GetString(535);
-    public string ContainerResolution => GetString(538);
+    public string ResourceContainerFidelity => GetString(538);
+    public string ContainerResolution => ResourceContainerFidelity;
     public string ContainerMimeType => GetString(539);
-    public string ContainerId => GetString(543);
+    public string ContainerId => GetString(542);
+    public string AssetType => GetString(543);
 
     // DRM (type 1-3)
     public string DrmServerId => GetString(1);
@@ -161,9 +171,9 @@ public class EXTHHead : BaseHead
     public string CDEType => CdeType;
     public uint K8ResourcesCount => ResourcesCount;
     public string K8MastheadCoverImage => MastheadCoverImage;
-    public string WatermarkHexString => Watermark;
-    public string TamperProofKeysHexString => TamperProofKeys;
-    public string FontSignatureHexString => FontSignature;
+    public string WatermarkHexString => GetHex(208);
+    public string TamperProofKeysHexString => GetHex(209);
+    public string FontSignatureHexString => GetHex(300);
     public string TitleKatagana => TitleKatakana;
     public string CreatorKatagana => CreatorKatakana;
     public string PublisherKatagana => PublisherKatakana;
