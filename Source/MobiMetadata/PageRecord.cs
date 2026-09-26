@@ -80,7 +80,27 @@ public class PageRecord
             throw new MobiMetadataException("Record exceeds the supported allocation limit; use a stream for large images.");
     }
 
-    private async Task<bool> MatchSignatureAsync(byte[] signature)
+    internal PageRecord WithPayloadOffset(int offset) => new(_stream, _position, (uint)_length, offset, _semaphore)
+    {
+        ResourceIndex = ResourceIndex
+    };
+
+    internal async Task<bool> IsImageContainerAsync()
+    {
+        if (_length < 60) return false;
+        var prefix = await ReadDataAsync(48, 12).ConfigureAwait(false);
+        if (!prefix.Span[..4].SequenceEqual("EXTH"u8)) return false;
+        var length = Converter.ToUInt32(prefix.Span.Slice(4, 4));
+        if (length < 12 || length > 16 * 1024 * 1024 || length > _length - 48)
+            throw new MobiMetadataException("Invalid inline container EXTH length.");
+        var bytes = await ReadDataAsync(48, (int)length).ConfigureAwait(false);
+        using var stream = new MemoryStream(bytes.ToArray(), writable: false);
+        var exth = new EXTHHead();
+        await exth.ReadHeaderAsync(stream).ConfigureAwait(false);
+        return exth.ContainerMimeType == "application/image";
+    }
+
+    internal async Task<bool> MatchSignatureAsync(byte[] signature)
     {
         if (_length < signature.Length) return false;
         await _semaphore.WaitAsync().ConfigureAwait(false);

@@ -40,7 +40,7 @@ public class PageRecords
             };
             if (coverOffset != uint.MaxValue && record.ResourceIndex == coverOffset) Cover = record;
             if (thumbOffset != uint.MaxValue && record.ResourceIndex == thumbOffset) Thumbnail = record;
-            if (record != Cover && record != Thumbnail) _records.Add(record);
+            _records.Add(record);
         }
     }
 
@@ -61,12 +61,35 @@ public class PageRecords
         Resc = null;
         Datp = null;
         KindleEmbed = null;
-        if (Cover != null && !await IsUsableImageAsync(Cover, hd).ConfigureAwait(false))
-            throw new MobiMetadataException("Cover record is not an image resource.");
-        if (Thumbnail != null && !await IsUsableImageAsync(Thumbnail, hd).ConfigureAwait(false))
-            throw new MobiMetadataException("Thumbnail record is not an image resource.");
-        foreach (var record in _records)
+        bool? imageContainer = null;
+        foreach (var rawRecord in _records)
         {
+            var record = rawRecord;
+            bool usable = false;
+            if (!hd && await record.MatchSignatureAsync("CONT"u8.ToArray()).ConfigureAwait(false))
+            {
+                imageContainer = record.Size == 12 && await record.MatchSignatureAsync("CONTBOUNDARY"u8.ToArray()).ConfigureAwait(false)
+                    ? null : await record.IsImageContainerAsync().ConfigureAwait(false);
+            }
+            else if (!hd && imageContainer.HasValue)
+            {
+                if (imageContainer.Value && record.Size >= 12 && await record.IsCresAsync().ConfigureAwait(false))
+                {
+                    record = record.WithPayloadOffset(12);
+                    usable = await record.IsImageAsync().ConfigureAwait(false);
+                }
+            }
+            else usable = await IsUsableImageAsync(record, hd).ConfigureAwait(false);
+
+            bool isCover = Cover?.ResourceIndex == record.ResourceIndex;
+            bool isThumbnail = Thumbnail?.ResourceIndex == record.ResourceIndex;
+            if (isCover || isThumbnail)
+            {
+                if (!usable) throw new MobiMetadataException("Cover or thumbnail record is not an image resource.");
+                if (isCover) Cover = record;
+                if (isThumbnail) Thumbnail = record;
+                continue;
+            }
             var resc = await record.GetRescRecordAsync().ConfigureAwait(false);
             if (resc != null)
             {
@@ -77,7 +100,7 @@ public class PageRecords
             else if (await record.IsFontAsync().ConfigureAwait(false)) _fonts.Add(record);
             else if (await record.IsDatpAsync().ConfigureAwait(false)) Datp = record;
             else if (await record.IsKindleEmbedAsync().ConfigureAwait(false)) KindleEmbed = record;
-            else if (await IsUsableImageAsync(record, hd).ConfigureAwait(false)) _images.Add(record);
+            else if (usable) _images.Add(record);
             else _rest.Add(record);
         }
     }
