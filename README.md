@@ -7,7 +7,7 @@ A .NET library for reading strongly typed metadata from MOBI/AZW ebook files (DR
 - Read metadata from MOBI, AZW, and AZW3 files
 - Extract cover images and embedded images
 - Support for HD image extraction from AZW6/azw.res companion files
-- Full KF8 format support with navigation/toc parsing
+- KF8 structure and navigation/toc parsing
 - Text content extraction with decompression support
 - No external dependencies in the main library
 
@@ -16,8 +16,12 @@ A .NET library for reading strongly typed metadata from MOBI/AZW ebook files (DR
 - MOBI (older Kindle format)
 - AZW (Kindle format)
 - AZW3/KF8 (Kindle Format 8)
-- PDB (Palm Database)
+- BOOK/MOBI Palm Database containers
 - AZW6/azw.res (HD image containers)
+
+KFX, KPF, Topaz, generic PDB ebook formats, and encrypted text are not supported.
+KF8 text extraction returns the decompressed raw content; it does not reconstruct a
+complete EPUB or render the book. Rare INDX encoding 65002 is explicitly unsupported.
 
 ## Installation
 
@@ -82,7 +86,6 @@ var coverStream = metadata.OpenCoverStream();
 foreach (var image in metadata.Images)
 {
     var imageBytes = await image.GetImageBytesAsync();
-    var mimeType = image.MimeType;
 }
 
 // Get specific image by index
@@ -110,9 +113,9 @@ await metadata.ParseKf8Async();
 // Access navigation
 if (metadata.Navigation != null)
 {
-    foreach (var item in metadata.Navigation.Items)
+    foreach (var item in metadata.Navigation.Entries)
     {
-        Console.WriteLine($"{item.Title} - {item.Href}");
+        Console.WriteLine($"{item.Title} - offset {item.Offset}");
     }
 }
 ```
@@ -123,7 +126,7 @@ if (metadata.Navigation != null)
 // After reading metadata, access text content
 if (metadata.TextContent != null)
 {
-    var text = await metadata.TextContent.GetTextAsync();
+    var text = await metadata.TextContent.ExtractTextAsync();
 }
 ```
 
@@ -172,6 +175,27 @@ The library supports the following compression formats:
 - No compression
 - PalmDOC compression
 - HUFF/CDIC compression (Huffman coding)
+
+## Reading and Resource Limits
+
+Input streams must be readable and seekable and remain open while extracting data.
+The library does not own the streams. Its extraction operations coordinate access to
+shared streams; callers must not independently move or modify those streams during
+an operation. Reusing an instance clears the previous book's results, including
+after a failed read. Previously returned objects belong to the previous read.
+
+In dual MOBI files, text and KF8 structures use the KF8 rendition. `MobiHeader` and
+`IsKf8` describe the primary header; `IsDualMobi` identifies a validated second rendition.
+`Images` and the indexed image accessors select the same HD resource when available.
+`PageCount` counts extracted non-cover images, not printed pages or RESC spine entries.
+
+Allocation limits are 16 MiB for header data, 64 MiB for an individual buffered
+record or decompression result, and 256 MiB for extracted text. HUFF dictionary data
+and each index are limited to 64 MiB, with bounded entry counts and decoding work.
+`OpenImageStream` can read larger image records without allocating their complete
+contents. Malformed sizes, invalid compression references and encrypted text produce
+`MobiMetadataException`. Raw image bytes and text remain untrusted content for any
+renderer or image decoder used by the calling application.
 
 ## Building
 
