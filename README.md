@@ -25,18 +25,6 @@ complete EPUB or render the book. Rare INDX encoding 65002 is explicitly unsuppo
 
 ## Installation
 
-### Via NuGet
-
-```bash
-dotnet add package MobiMetadata
-```
-
-### Via GitHub Packages
-
-Add the GitHub Packages source.
-
-Then install:
-
 ```bash
 dotnet add package MobiMetadata
 ```
@@ -145,7 +133,7 @@ The main entry point for reading MOBI files.
 | `Kf8Parser` | KF8 format parser (for KF8/Dual MOBI files) |
 | `Navigation` | Navigation/toc (after `ParseKf8Async`) |
 | `PageRecords` | Image records (after `LoadImagesAsync`) |
-| `Images` | List of all images (after `LoadImagesAsync`) |
+| `Images` | Page images, without the cover and thumbnail (after `LoadImagesAsync`) |
 | `Cover` | Cover image record (after `LoadImagesAsync`) |
 | `IsKf8` | True if file is KF8 format |
 | `IsDualMobi` | True if file contains both MOBI and KF8 |
