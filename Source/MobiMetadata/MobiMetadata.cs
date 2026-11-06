@@ -51,15 +51,8 @@ public class MobiMetadata : IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (!_disposed)
-        {
-            if (disposing)
-            {
-                // Note: We don't own the streams passed to us, so we don't dispose them
-                // The streams are passed externally and should be disposed by the caller
-            }
-            _disposed = true;
-        }
+        // The caller owns the streams and disposes them.
+        _disposed = true;
     }
 
     public async Task ReadMetadataAsync(Stream stream)
@@ -201,7 +194,7 @@ public class MobiMetadata : IDisposable
             if (hdStream != null)
             {
                 await LoadHdContainerAsync(hdStream).ConfigureAwait(false);
-                await HdContainer!.AnalyzeHdAsync(PageRecords.Images.Count).ConfigureAwait(false);
+                await HdContainer!.AnalyzeHdAsync().ConfigureAwait(false);
             }
             MergeImages();
         }

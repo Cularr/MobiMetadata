@@ -6,10 +6,6 @@ public abstract class BaseHead
 {
     protected Memory<byte> _headerData;
 
-    protected Memory<byte> HeaderData => _headerData;
-
-    public FileInfo? Path { get; set; }
-
     public bool SkipProperties { get; set; }
 
     public bool SkipRecords { get; set; }

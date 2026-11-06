@@ -46,12 +46,8 @@ public class PageRecords
 
     public Task AnalyzeAsync() => AnalyzeRecordsAsync(false);
 
-    public Task AnalyzeHdAsync(int expectedCount)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegative(expectedCount);
-        // Keep placeholders and pair by resource index, before filtering fonts.
-        return AnalyzeRecordsAsync(true);
-    }
+    // Keep placeholders and pair by resource index, before filtering fonts.
+    public Task AnalyzeHdAsync() => AnalyzeRecordsAsync(true);
 
     private async Task AnalyzeRecordsAsync(bool hd)
     {
@@ -110,9 +106,6 @@ public class PageRecords
         if (hd && !await record.IsCresAsync().ConfigureAwait(false)) return false;
         return (hd && record.IsCresPlaceholder) || await record.IsImageAsync().ConfigureAwait(false);
     }
-
-    // AnalyzeAsync already separates fonts; retain this entry point for existing callers.
-    public Task SeparateFontsAsync() => Task.CompletedTask;
 
     public int PageCount => _images.Count;
 

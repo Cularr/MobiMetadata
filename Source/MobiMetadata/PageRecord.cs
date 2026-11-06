@@ -103,52 +103,20 @@ public class PageRecord
     internal async Task<bool> MatchSignatureAsync(byte[] signature)
     {
         if (_length < signature.Length) return false;
-        await _semaphore.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            _stream.Position = _position;
-            var buffer = new byte[signature.Length];
-            await _stream.ReadExactlyAsync(buffer).ConfigureAwait(false);
-            return buffer.AsSpan().SequenceEqual(signature);
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
+        var buffer = await ReadAtAsync(_position, signature.Length).ConfigureAwait(false);
+        return buffer.AsSpan().SequenceEqual(signature);
     }
 
     public byte[] ReadData()
     {
         ValidateAllocation(_length);
-        _semaphore.Wait();
-        try
-        {
-            _stream.Position = _position;
-            var buffer = new byte[_length];
-            _stream.ReadExactly(buffer);
-            return buffer;
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
+        return ReadAt(_position, _length);
     }
 
     public async Task<byte[]> ReadDataAsync()
     {
         ValidateAllocation(_length);
-        await _semaphore.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            _stream.Position = _position;
-            var buffer = new byte[_length];
-            await _stream.ReadExactlyAsync(buffer).ConfigureAwait(false);
-            return buffer;
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
+        return await ReadAtAsync(_position, _length).ConfigureAwait(false);
     }
 
     protected async Task<Memory<byte>> ReadDataAsync(int offset, int length)
@@ -156,30 +124,30 @@ public class PageRecord
         if (offset < 0 || offset > _length || length < 0 || length > _length - offset)
             throw new MobiMetadataException("Requested data exceeds its record.");
         ValidateAllocation(length);
-        var buffer = new byte[length];
-        await _semaphore.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            _stream.Position = _position + offset;
-            await _stream.ReadExactlyAsync(buffer).ConfigureAwait(false);
-            return buffer;
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
+        return await ReadAtAsync(_position + offset, length).ConfigureAwait(false);
     }
 
     public byte[] GetImageBytes()
     {
         var dataLength = _length - _dataOffset;
         ValidateAllocation(dataLength);
-        var buffer = new byte[dataLength];
-        
+        return ReadAt(_position + _dataOffset, dataLength);
+    }
+
+    public async Task<byte[]> GetImageBytesAsync()
+    {
+        var dataLength = _length - _dataOffset;
+        ValidateAllocation(dataLength);
+        return await ReadAtAsync(_position + _dataOffset, dataLength).ConfigureAwait(false);
+    }
+
+    private byte[] ReadAt(long position, int length)
+    {
+        var buffer = new byte[length];
         _semaphore.Wait();
         try
         {
-            _stream.Position = _position + _dataOffset;
+            _stream.Position = position;
             _stream.ReadExactly(buffer);
             return buffer;
         }
@@ -189,16 +157,13 @@ public class PageRecord
         }
     }
 
-    public async Task<byte[]> GetImageBytesAsync()
+    private async Task<byte[]> ReadAtAsync(long position, int length)
     {
-        var dataLength = _length - _dataOffset;
-        ValidateAllocation(dataLength);
-        var buffer = new byte[dataLength];
-        
+        var buffer = new byte[length];
         await _semaphore.WaitAsync().ConfigureAwait(false);
         try
         {
-            _stream.Position = _position + _dataOffset;
+            _stream.Position = position;
             await _stream.ReadExactlyAsync(buffer).ConfigureAwait(false);
             return buffer;
         }
