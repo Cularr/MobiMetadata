@@ -12,38 +12,7 @@ public class ComicMetadataTests : IAsyncLifetime
     public ComicMetadataTests(ITestOutputHelper output)
     {
         _output = output;
-        // Look for TestFiles in multiple possible locations
-        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        _comicPath = Path.Combine(baseDir, "TestFiles", "Cage of Eden v13 c104-112.mobi");
-
-        // Also check relative to project if not found
-        if (!File.Exists(_comicPath))
-        {
-            var projectDir = FindProjectDirectory(baseDir);
-            if (projectDir != null)
-            {
-                _comicPath = Path.Combine(projectDir, "TestFiles", "Cage of Eden v13 c104-112.mobi");
-            }
-        }
-    }
-
-    private static string? FindProjectDirectory(string startPath)
-    {
-        var dir = new DirectoryInfo(startPath);
-        while (dir != null)
-        {
-            if (dir.Name == "bin" || dir.Name == "Debug" || dir.Name.StartsWith("net"))
-            {
-                dir = dir.Parent;
-                continue;
-            }
-            if (File.Exists(Path.Combine(dir.FullName, "MobiMetadata.Tests.csproj")))
-            {
-                return dir.FullName;
-            }
-            dir = dir.Parent;
-        }
-        return null;
+        _comicPath = Environment.GetEnvironmentVariable("MOBI_TEST_COMIC") ?? string.Empty;
     }
 
     public Task InitializeAsync() => Task.CompletedTask;

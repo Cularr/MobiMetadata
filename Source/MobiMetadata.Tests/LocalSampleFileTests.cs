@@ -38,7 +38,7 @@ public class LocalSampleFileTests : IAsyncLifetime
         "sample-pdb-files-famouspaintings.pdb"
     ];
 
-    public static readonly string ComicFile = "Cage of Eden v13 c104-112.mobi";
+    public static readonly string ComicFile = Path.GetFullPath(Environment.GetEnvironmentVariable("MOBI_TEST_COMIC") ?? "missing-comic.mobi");
 
     public LocalSampleFileTests(ITestOutputHelper output)
     {
