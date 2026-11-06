@@ -18,7 +18,7 @@ public class ComicMetadataTests : IAsyncLifetime
     public Task InitializeAsync() => Task.CompletedTask;
     public Task DisposeAsync() => Task.CompletedTask;
 
-    [Fact]
+    [SkippableFact]
     public async Task Comic_ExploreAllMetadata()
     {
         if (!File.Exists(_comicPath))
@@ -96,25 +96,18 @@ public class ComicMetadataTests : IAsyncLifetime
         }
 
         _output.WriteLine("\n=== IMAGE LOADING ===");
-        try
-        {
-            await mobi.LoadImagesAsync();
-            _output.WriteLine($"Images loaded successfully");
-            _output.WriteLine($"Page Count: {mobi.PageCount}");
-            _output.WriteLine($"Cover: {(mobi.Cover != null ? $"Yes ({mobi.Cover.Size} bytes)" : "No")}");
+        await mobi.LoadImagesAsync();
+        _output.WriteLine($"Images loaded successfully");
+        _output.WriteLine($"Page Count: {mobi.PageCount}");
+        _output.WriteLine($"Cover: {(mobi.Cover != null ? $"Yes ({mobi.Cover.Size} bytes)" : "No")}");
 
-            if (mobi.Images.Count > 0)
-            {
-                _output.WriteLine($"\nFirst 5 images:");
-                for (int i = 0; i < Math.Min(5, mobi.Images.Count); i++)
-                {
-                    _output.WriteLine($"  [{i}] Size: {mobi.Images[i].Size} bytes");
-                }
-            }
-        }
-        catch (Exception ex)
+        if (mobi.Images.Count > 0)
         {
-            _output.WriteLine($"Image loading failed: {ex.Message}");
+            _output.WriteLine($"\nFirst 5 images:");
+            for (int i = 0; i < Math.Min(5, mobi.Images.Count); i++)
+            {
+                _output.WriteLine($"  [{i}] Size: {mobi.Images[i].Size} bytes");
+            }
         }
 
         _output.WriteLine("\n=== VALIDATION ===");
@@ -124,7 +117,7 @@ public class ComicMetadataTests : IAsyncLifetime
         Assert.True(mobi.PdbHeader.NumRecords > 0, "Should have records");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Comic_ExtractCover()
     {
         if (!File.Exists(_comicPath))
@@ -139,25 +132,19 @@ public class ComicMetadataTests : IAsyncLifetime
 
         var coverBytes = await mobi.GetCoverBytesAsync();
 
-        if (coverBytes != null)
-        {
-            _output.WriteLine($"Cover found: {coverBytes.Length} bytes");
+        Assert.NotNull(coverBytes);
+        _output.WriteLine($"Cover found: {coverBytes.Length} bytes");
 
-            using var coverStream = new MemoryStream(coverBytes);
-            using var image = await SixLabors.ImageSharp.Image.LoadAsync(coverStream);
-            _output.WriteLine($"Cover dimensions: {image.Width}x{image.Height}");
-            _output.WriteLine($"Cover format: {image.Metadata.DecodedImageFormat?.Name ?? "unknown"}");
+        using var coverStream = new MemoryStream(coverBytes);
+        using var image = await SixLabors.ImageSharp.Image.LoadAsync(coverStream);
+        _output.WriteLine($"Cover dimensions: {image.Width}x{image.Height}");
+        _output.WriteLine($"Cover format: {image.Metadata.DecodedImageFormat?.Name ?? "unknown"}");
 
-            Assert.True(image.Width > 0);
-            Assert.True(image.Height > 0);
-        }
-        else
-        {
-            _output.WriteLine("No cover found");
-        }
+        Assert.True(image.Width > 0);
+        Assert.True(image.Height > 0);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Comic_ExtractAllImages()
     {
         if (!File.Exists(_comicPath))
@@ -172,32 +159,18 @@ public class ComicMetadataTests : IAsyncLifetime
 
         _output.WriteLine($"Total pages: {mobi.PageCount}");
 
-        var successCount = 0;
-        var failCount = 0;
         var dimensions = new List<(int Width, int Height, string Format)>();
 
         for (int i = 0; i < mobi.Images.Count; i++)
         {
-            try
-            {
-                var imageBytes = await mobi.GetImageBytesAsync(i);
-                using var imageMemStream = new MemoryStream(imageBytes);
-                using var image = await SixLabors.ImageSharp.Image.LoadAsync(imageMemStream);
+            var imageBytes = await mobi.GetImageBytesAsync(i);
+            using var imageMemStream = new MemoryStream(imageBytes);
+            using var image = await SixLabors.ImageSharp.Image.LoadAsync(imageMemStream);
 
-                dimensions.Add((image.Width, image.Height, image.Metadata.DecodedImageFormat?.Name ?? "unknown"));
-                successCount++;
-            }
-            catch (Exception ex)
-            {
-                _output.WriteLine($"Image {i}: FAILED - {ex.Message}");
-                failCount++;
-            }
+            dimensions.Add((image.Width, image.Height, image.Metadata.DecodedImageFormat?.Name ?? "unknown"));
         }
 
         _output.WriteLine($"\n=== IMAGE SUMMARY ===");
-        _output.WriteLine($"Successfully loaded: {successCount}/{mobi.Images.Count}");
-        _output.WriteLine($"Failed: {failCount}");
-
         if (dimensions.Count > 0)
         {
             var uniqueSizes = dimensions.Select(d => (d.Width, d.Height)).Distinct().ToList();
@@ -212,10 +185,11 @@ public class ComicMetadataTests : IAsyncLifetime
             _output.WriteLine($"\nFormats: {string.Join(", ", formats)}");
         }
 
-        Assert.True(successCount > 0, "At least some images should load successfully");
+        Assert.NotEmpty(mobi.Images);
+        Assert.Equal(mobi.Images.Count, dimensions.Count);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Comic_GetPageByIndex()
     {
         if (!File.Exists(_comicPath))
@@ -250,7 +224,7 @@ public class ComicMetadataTests : IAsyncLifetime
         Assert.True(lastBytes.Length > 0);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Comic_StreamAccess()
     {
         if (!File.Exists(_comicPath))

@@ -31,7 +31,7 @@ public class FormatDetectionTests : IAsyncLifetime
 
     #region KF8 Detection
 
-    [Fact]
+    [SkippableFact]
     public async Task Kf8Files_HaveVersion8()
     {
         var kf8Files = _downloader.GetAllKf8Files().ToList();
@@ -53,7 +53,7 @@ public class FormatDetectionTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Kf8Files_HaveExthHeader()
     {
         var kf8Files = _downloader.GetAllKf8Files().ToList();
@@ -73,7 +73,7 @@ public class FormatDetectionTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Kf8Files_MobiTypeIsElectronicBook()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -94,7 +94,7 @@ public class FormatDetectionTests : IAsyncLifetime
 
     #region Old MOBI Detection
 
-    [Fact]
+    [SkippableFact]
     public async Task OldMobiFiles_HaveVersion6()
     {
         var oldMobiFiles = _downloader.GetAllOldMobiFiles().ToList();
@@ -116,7 +116,7 @@ public class FormatDetectionTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task OldMobiFiles_MobiTypeIsMobipocketBook()
     {
         var filePath = _downloader.GetFilePath("frankenstein_mobi.mobi");
@@ -135,7 +135,7 @@ public class FormatDetectionTests : IAsyncLifetime
 
     #region Kindle Images (Version 6 with HUFF/CDIC)
 
-    [Fact]
+    [SkippableFact]
     public async Task KindleImagesFiles_HaveVersion6()
     {
         var kindleImagesFiles = _downloader.GetAllKindleImagesFiles().ToList();
@@ -159,7 +159,7 @@ public class FormatDetectionTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task KindleImagesFiles_HaveImages()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
@@ -173,7 +173,7 @@ public class FormatDetectionTests : IAsyncLifetime
         _output.WriteLine($"First Image Index: {mobi.MobiHeader.FirstImageIndex}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task KindleImagesFiles_OftenUseHuffCdic()
     {
         var kindleImagesFiles = _downloader.GetAllKindleImagesFiles().ToList();
@@ -203,7 +203,7 @@ public class FormatDetectionTests : IAsyncLifetime
 
     #region Dual MOBI Detection
 
-    [Fact]
+    [SkippableFact]
     public async Task DualMobi_DetectionWorks()
     {
         // Dual MOBI has KF8 boundary offset > 0
@@ -227,7 +227,7 @@ public class FormatDetectionTests : IAsyncLifetime
 
     #region Theory Tests - All Files
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("frankenstein_kf8.mobi", 8u, true)]
     [InlineData("alice_wonderland_kf8.mobi", 8u, true)]
     [InlineData("frankenstein_mobi.mobi", 6u, false)]

@@ -68,12 +68,15 @@ public class LocalSampleFileTests : IAsyncLifetime
 
     private string GetFilePath(string filename) => Path.Combine(_testFilesDir, filename);
     private bool FileExists(string filename) => File.Exists(GetFilePath(filename));
+    private void SkipWithoutSamples(IEnumerable<string> files) => Skip.IfNot(files.Any(FileExists), "No local sample files installed");
 
     #region AZW3 File Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task Azw3_ReadsMetadata()
     {
+        SkipWithoutSamples(Azw3Files);
+
         foreach (var filename in Azw3Files)
         {
             if (!FileExists(filename)) continue;
@@ -89,12 +92,12 @@ public class LocalSampleFileTests : IAsyncLifetime
             _output.WriteLine($"  IsKf8: {mobi.IsKf8}");
             _output.WriteLine($"  Compression: {mobi.PalmDocHeader.CompressionName}");
 
-            Assert.NotNull(mobi.PdbHeader);
-            Assert.NotNull(mobi.MobiHeader);
+            Assert.False(string.IsNullOrWhiteSpace(mobi.MobiHeader.FullName));
+            Assert.True(mobi.MobiHeader.FileVersion > 0);
         }
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("sample-azw3-files-Alices Adventures in Wonderland.azw3")]
     [InlineData("sample-azw3-files-Sway.azw3")]
     public async Task Azw3_ExtractsText(string filename)
@@ -106,21 +109,22 @@ public class LocalSampleFileTests : IAsyncLifetime
         var mobi = new MobiMetadata();
         await mobi.ReadMetadataAsync(stream);
 
-        if (mobi.TextContent != null)
-        {
-            var text = await mobi.TextContent.ExtractTextAsync();
-            _output.WriteLine($"[{filename}] Text length: {text.Length:N0} chars");
-            Assert.NotEmpty(text);
-        }
+        Assert.NotNull(mobi.TextContent);
+
+        var text = await mobi.TextContent.ExtractTextAsync();
+        _output.WriteLine($"[{filename}] Text length: {text.Length:N0} chars");
+        Assert.NotEmpty(text);
     }
 
     #endregion
 
     #region MOBI File Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task Mobi_ReadsMetadata()
     {
+        SkipWithoutSamples(MobiFiles);
+
         foreach (var filename in MobiFiles)
         {
             if (!FileExists(filename)) continue;
@@ -136,12 +140,12 @@ public class LocalSampleFileTests : IAsyncLifetime
             _output.WriteLine($"  Type: {mobi.MobiHeader.MobiTypeName}");
             _output.WriteLine($"  Compression: {mobi.PalmDocHeader.CompressionName}");
 
-            Assert.NotNull(mobi.PdbHeader);
-            Assert.NotNull(mobi.MobiHeader);
+            Assert.False(string.IsNullOrWhiteSpace(mobi.MobiHeader.FullName));
+            Assert.True(mobi.MobiHeader.FileVersion > 0);
         }
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("sample-mobi-files-Alices Adventures in Wonderland.mobi")]
     [InlineData("sample-mobi-files-Sway.mobi")]
     public async Task Mobi_ExtractsText(string filename)
@@ -153,23 +157,24 @@ public class LocalSampleFileTests : IAsyncLifetime
         var mobi = new MobiMetadata();
         await mobi.ReadMetadataAsync(stream);
 
-        if (mobi.TextContent != null)
-        {
-            var text = await mobi.TextContent.ExtractTextAsync();
-            _output.WriteLine($"[{filename}] Text length: {text.Length:N0} chars");
-            Assert.NotEmpty(text);
-        }
+        Assert.NotNull(mobi.TextContent);
+
+        var text = await mobi.TextContent.ExtractTextAsync();
+        _output.WriteLine($"[{filename}] Text length: {text.Length:N0} chars");
+        Assert.NotEmpty(text);
     }
 
     #endregion
 
     #region PDB File Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task Pdb_ReadsPdbHeader()
     {
         // PDB files have a different format - they may not have MOBI headers
         // We can only test that PDB header parsing works
+        SkipWithoutSamples(PdbFiles);
+
         foreach (var filename in PdbFiles)
         {
             if (!FileExists(filename)) continue;
@@ -187,6 +192,8 @@ public class LocalSampleFileTests : IAsyncLifetime
             _output.WriteLine($"  Records: {pdb.NumRecords}");
 
             Assert.True(pdb.NumRecords > 0);
+            Assert.False(string.IsNullOrWhiteSpace(pdb.Name));
+            Assert.False(string.IsNullOrWhiteSpace(pdb.TypeName));
         }
     }
 
@@ -194,7 +201,7 @@ public class LocalSampleFileTests : IAsyncLifetime
 
     #region Comic File Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task Comic_ReadsMetadata()
     {
         if (!FileExists(ComicFile)) throw new Xunit.SkipException($"Comic file not found: {ComicFile}");
@@ -214,7 +221,7 @@ public class LocalSampleFileTests : IAsyncLifetime
         Assert.NotNull(mobi.MobiHeader);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Comic_LoadsImages()
     {
         if (!FileExists(ComicFile)) throw new Xunit.SkipException($"Comic file not found: {ComicFile}");
@@ -223,31 +230,16 @@ public class LocalSampleFileTests : IAsyncLifetime
         await using var stream = File.OpenRead(filePath);
         var mobi = new MobiMetadata(requireExthHeader: true);
         await mobi.ReadMetadataAsync(stream);
+        await mobi.LoadImagesAsync();
 
-        try
-        {
-            await mobi.LoadImagesAsync();
+        _output.WriteLine($"Page count: {mobi.PageCount}");
+        _output.WriteLine($"Cover: {(mobi.Cover != null ? $"Yes ({mobi.Cover.Size} bytes)" : "No")}");
 
-            _output.WriteLine($"Page count: {mobi.PageCount}");
-            _output.WriteLine($"Cover: {(mobi.Cover != null ? $"Yes ({mobi.Cover.Size} bytes)" : "No")}");
-
-            if (mobi.Images.Count > 0)
-            {
-                for (int i = 0; i < Math.Min(5, mobi.Images.Count); i++)
-                {
-                    _output.WriteLine($"  Image {i}: {mobi.Images[i].Size} bytes");
-                }
-            }
-
-            Assert.True(mobi.Images.Count > 0);
-        }
-        catch (MobiMetadataException ex)
-        {
-            _output.WriteLine($"Could not load images: {ex.Message}");
-        }
+        Assert.NotEmpty(mobi.Images);
+        Assert.NotNull(mobi.Cover);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Comic_ExtractsAllImages()
     {
         if (!FileExists(ComicFile)) throw new Xunit.SkipException($"Comic file not found: {ComicFile}");
@@ -256,38 +248,18 @@ public class LocalSampleFileTests : IAsyncLifetime
         await using var stream = File.OpenRead(filePath);
         var mobi = new MobiMetadata(requireExthHeader: true);
         await mobi.ReadMetadataAsync(stream);
+        await mobi.LoadImagesAsync();
 
-        try
+        Assert.NotEmpty(mobi.Images);
+
+        for (int i = 0; i < mobi.Images.Count; i++)
         {
-            await mobi.LoadImagesAsync();
+            var imageBytes = await mobi.GetImageBytesAsync(i);
+            using var imageMemStream = new MemoryStream(imageBytes);
+            using var image = await SixLabors.ImageSharp.Image.LoadAsync(imageMemStream);
 
-            var successCount = 0;
-            var failCount = 0;
-
-            for (int i = 0; i < Math.Min(mobi.Images.Count, 10); i++)
-            {
-                try
-                {
-                    var imageBytes = await mobi.GetImageBytesAsync(i);
-                    using var imageMemStream = new MemoryStream(imageBytes);
-                    using var image = await SixLabors.ImageSharp.Image.LoadAsync(imageMemStream);
-
-                    _output.WriteLine($"Image {i}: {image.Width}x{image.Height} ({image.Metadata.DecodedImageFormat?.Name})");
-                    successCount++;
-                }
-                catch (Exception ex)
-                {
-                    _output.WriteLine($"Image {i}: FAILED - {ex.Message}");
-                    failCount++;
-                }
-            }
-
-            _output.WriteLine($"Successfully loaded: {successCount}, Failed: {failCount}");
-            Assert.True(successCount > 0, "At least one image should load successfully");
-        }
-        catch (MobiMetadataException ex)
-        {
-            _output.WriteLine($"Could not load images: {ex.Message}");
+            Assert.True(image.Width > 0);
+            Assert.True(image.Height > 0);
         }
     }
 
@@ -295,7 +267,7 @@ public class LocalSampleFileTests : IAsyncLifetime
 
     #region Cross-Format Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task CrossFormat_Azw3VsMobi_SameContent()
     {
         // Compare Alice in Wonderland AZW3 vs MOBI

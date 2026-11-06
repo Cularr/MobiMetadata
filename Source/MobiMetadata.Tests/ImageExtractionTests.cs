@@ -31,10 +31,10 @@ public class ImageExtractionTests : IAsyncLifetime
 
     #region Basic Image Loading
 
-    [Fact]
+    [SkippableFact]
     public async Task LoadImages_RequiresExthHeader()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -48,10 +48,10 @@ public class ImageExtractionTests : IAsyncLifetime
         _output.WriteLine($"Image count: {mobi.Images.Count}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task LoadImages_PopulatesPageCount()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -65,10 +65,10 @@ public class ImageExtractionTests : IAsyncLifetime
         _output.WriteLine($"Page count: {mobi.PageCount}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task LoadImages_CreatesPageRecords()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -84,10 +84,10 @@ public class ImageExtractionTests : IAsyncLifetime
 
     #region Image Bytes Access
 
-    [Fact]
+    [SkippableFact]
     public async Task GetImageBytes_ReturnsValidData()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -104,10 +104,10 @@ public class ImageExtractionTests : IAsyncLifetime
         _output.WriteLine($"First image size: {imageBytes.Length} bytes");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task GetImageBytes_ThrowsForInvalidIndex()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -119,10 +119,10 @@ public class ImageExtractionTests : IAsyncLifetime
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => mobi.GetImageBytesAsync(mobi.Images.Count));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task GetImageBytes_AllImages_AreValid()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -130,25 +130,25 @@ public class ImageExtractionTests : IAsyncLifetime
         await mobi.ReadMetadataAsync(stream);
         await mobi.LoadImagesAsync();
 
-        var validCount = 0;
-        for (int i = 0; i < Math.Min(mobi.Images.Count, 10); i++)
+        Assert.NotEmpty(mobi.Images);
+
+        for (int i = 0; i < mobi.Images.Count; i++)
         {
             var bytes = await mobi.GetImageBytesAsync(i);
-            if (bytes.Length > 0) validCount++;
+            Assert.NotEmpty(bytes);
         }
 
-        Assert.True(validCount > 0);
-        _output.WriteLine($"Valid images: {validCount}/10");
+        _output.WriteLine($"Valid images: {mobi.Images.Count}");
     }
 
     #endregion
 
     #region Image Stream Access
 
-    [Fact]
+    [SkippableFact]
     public async Task OpenImageStream_ReturnsReadableStream()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -169,10 +169,10 @@ public class ImageExtractionTests : IAsyncLifetime
         _output.WriteLine($"Read {read} bytes from image stream");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task OpenImageStream_ThrowsForInvalidIndex()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -188,10 +188,28 @@ public class ImageExtractionTests : IAsyncLifetime
 
     #region Cover Extraction
 
-    [Fact]
-    public async Task Cover_ExtractsBytes()
+    [SkippableFact]
+    public async Task Images_CoverAndThumbnailOnlyBook_HasNoPages()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
+
+        await using var stream = File.OpenRead(filePath);
+        var mobi = new MobiMetadata(requireExthHeader: true);
+        await mobi.ReadMetadataAsync(stream);
+        await mobi.LoadImagesAsync();
+
+        Assert.Equal(0, mobi.PageCount);
+        Assert.Empty(mobi.Images);
+        Assert.NotNull(mobi.Cover);
+        Assert.NotNull(mobi.PageRecords?.Thumbnail);
+        Assert.NotEmpty((await mobi.GetCoverBytesAsync())!);
+    }
+
+    [SkippableFact]
+    public async Task Cover_ExtractsBytes()
+    {
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -200,21 +218,17 @@ public class ImageExtractionTests : IAsyncLifetime
         await mobi.LoadImagesAsync();
 
         var coverBytes = await mobi.GetCoverBytesAsync();
-        if (coverBytes != null)
-        {
-            Assert.True(coverBytes.Length > 0);
-            _output.WriteLine($"Cover size: {coverBytes.Length} bytes");
-        }
-        else
-        {
-            _output.WriteLine("No cover found in this file");
-        }
+        Assert.NotNull(coverBytes);
+
+        using var image = SixLabors.ImageSharp.Image.Load(coverBytes);
+        Assert.True(image.Width > 0);
+        _output.WriteLine($"Cover size: {coverBytes.Length} bytes");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Cover_OpenStream()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -222,29 +236,19 @@ public class ImageExtractionTests : IAsyncLifetime
         await mobi.ReadMetadataAsync(stream);
         await mobi.LoadImagesAsync();
 
-        var coverStream = mobi.OpenCoverStream();
-        if (coverStream != null)
-        {
-            Assert.True(coverStream.CanRead);
-            _output.WriteLine("Cover stream opened successfully");
+        await using var coverStream = mobi.OpenCoverStream();
+        Assert.NotNull(coverStream);
+        Assert.True(coverStream.CanRead);
 
-            await using (coverStream)
-            {
-                var buffer = new byte[16];
-                var read = await coverStream.ReadAsync(buffer);
-                Assert.True(read > 0);
-            }
-        }
-        else
-        {
-            _output.WriteLine("No cover found");
-        }
+        var buffer = new byte[16];
+        var read = await coverStream.ReadAsync(buffer);
+        Assert.True(read > 0);
     }
 
-    [Fact]
-    public async Task Cover_HasSdCover_WhenAvailable()
+    [SkippableFact]
+    public async Task Cover_HasSdCover()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -252,26 +256,18 @@ public class ImageExtractionTests : IAsyncLifetime
         await mobi.ReadMetadataAsync(stream);
         await mobi.LoadImagesAsync();
 
-        // Check SD cover status
-        if (mobi.HasSdCover())
-        {
-            _output.WriteLine("SD cover available");
-            Assert.NotNull(mobi.PageRecords?.Cover);
-        }
-        else
-        {
-            _output.WriteLine("No SD cover");
-        }
+        Assert.True(mobi.HasSdCover());
+        Assert.NotNull(mobi.PageRecords?.Cover);
     }
 
     #endregion
 
     #region ImageSharp Integration
 
-    [Fact]
+    [SkippableFact]
     public async Task ImageSharp_LoadsExtractedImage()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -295,10 +291,10 @@ public class ImageExtractionTests : IAsyncLifetime
         _output.WriteLine($"Image format: {image.Metadata.DecodedImageFormat?.Name ?? "unknown"}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ImageSharp_LoadsImageFromStream()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -318,10 +314,10 @@ public class ImageExtractionTests : IAsyncLifetime
         _output.WriteLine($"Image dimensions: {image.Width}x{image.Height}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ImageSharp_DetectsImageFormat()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -340,10 +336,10 @@ public class ImageExtractionTests : IAsyncLifetime
         _output.WriteLine($"Default extension: {format.FileExtensions.FirstOrDefault()}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ImageSharp_AllImages_LoadSuccessfully()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -351,43 +347,27 @@ public class ImageExtractionTests : IAsyncLifetime
         await mobi.ReadMetadataAsync(stream);
         await mobi.LoadImagesAsync();
 
-        Assert.True(mobi.Images.Count > 0);
+        Assert.NotEmpty(mobi.Images);
 
-        var successCount = 0;
-        var failCount = 0;
-
-        for (int i = 0; i < Math.Min(mobi.Images.Count, 5); i++)
+        for (int i = 0; i < mobi.Images.Count; i++)
         {
-            try
-            {
-                var imageBytes = await mobi.GetImageBytesAsync(i);
-                using var imageMemStream = new MemoryStream(imageBytes);
-                using var image = await SixLabors.ImageSharp.Image.LoadAsync(imageMemStream);
+            var imageBytes = await mobi.GetImageBytesAsync(i);
+            using var imageMemStream = new MemoryStream(imageBytes);
+            using var image = await SixLabors.ImageSharp.Image.LoadAsync(imageMemStream);
 
-                Assert.True(image.Width > 0);
-                Assert.True(image.Height > 0);
-                successCount++;
-
-                _output.WriteLine($"Image {i}: {image.Width}x{image.Height} ({image.Metadata.DecodedImageFormat?.Name})");
-            }
-            catch (Exception ex)
-            {
-                failCount++;
-                _output.WriteLine($"Image {i}: FAILED - {ex.Message}");
-            }
+            Assert.True(image.Width > 0);
+            Assert.True(image.Height > 0);
+            _output.WriteLine($"Image {i}: {image.Width}x{image.Height} ({image.Metadata.DecodedImageFormat?.Name})");
         }
-
-        _output.WriteLine($"Successfully loaded: {successCount}, Failed: {failCount}");
-        Assert.True(successCount > 0, "At least one image should load successfully");
     }
 
     #endregion
 
     #region Theory Tests
 
-    [Theory]
-    [InlineData("frankenstein_kindle_images.mobi")]
-    [InlineData("alice_kindle_images.mobi")]
+    [SkippableTheory]
+    [InlineData("jane_eyre_kf8.mobi")]
+    [InlineData("pride_prejudice_kf8.mobi")]
     public async Task LoadImages_AllKindleImagesFiles_LoadSuccessfully(string filename)
     {
         var filePath = _downloader.GetFilePath(filename);

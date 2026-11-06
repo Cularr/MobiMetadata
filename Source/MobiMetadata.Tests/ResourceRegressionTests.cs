@@ -35,6 +35,35 @@ public class ResourceRegressionTests
     }
 
     [Fact]
+    public async Task RequireExthRejectsBooksWithoutExth()
+    {
+        using var stream = new MemoryStream(Book(false, Jpeg(1)));
+        using var book = new MobiMetadata(requireExthHeader: true);
+        await Assert.ThrowsAsync<MobiMetadataException>(() => book.ReadMetadataAsync(stream));
+    }
+
+    [Fact]
+    public async Task HuffCdicHeaderFieldsAreReadFromTheHeader()
+    {
+        const int firstRecord = 96;
+        var bytes = Book(false, Jpeg(1));
+        BinaryPrimitives.WriteUInt16BigEndian(bytes.AsSpan(firstRecord), PalmDOCHead.CompressionHuffCdic);
+        Put(bytes, firstRecord + 112, 2);
+        Put(bytes, firstRecord + 116, 3);
+        Put(bytes, firstRecord + 120, 4);
+        Put(bytes, firstRecord + 124, 5);
+        using var stream = new MemoryStream(bytes);
+        using var book = new MobiMetadata();
+        await book.ReadMetadataAsync(stream);
+        Assert.Equal("HUFF/CDIC", book.PalmDocHeader.CompressionName);
+        Assert.True(book.MobiHeader.HasHuffCdic);
+        Assert.Equal(2u, book.MobiHeader.HuffmanRecordOffset);
+        Assert.Equal(3u, book.MobiHeader.HuffmanRecordCount);
+        Assert.Equal(4u, book.MobiHeader.HuffmanTableOffset);
+        Assert.Equal(5u, book.MobiHeader.HuffmanTableLength);
+    }
+
+    [Fact]
     public async Task ReloadAndFailedReadClearPreviousBookState()
     {
         using var first = new MemoryStream(Book(true, Jpeg(1), Jpeg(2)));

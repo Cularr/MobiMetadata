@@ -31,7 +31,7 @@ public class HeaderTests : IAsyncLifetime
 
     #region PDB Header Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task PDBHeader_ReadsBasicProperties()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -53,7 +53,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"Records: {mobi.PdbHeader.NumRecords}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task PDBHeader_HasValidRecordInfo()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -73,7 +73,7 @@ public class HeaderTests : IAsyncLifetime
         }
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("frankenstein_kf8.mobi")]
     [InlineData("alice_wonderland_kf8.mobi")]
     [InlineData("sherlock_holmes_kf8.mobi")]
@@ -94,7 +94,7 @@ public class HeaderTests : IAsyncLifetime
 
     #region PalmDOC Header Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task PalmDOCHeader_ReadsCompressionInfo()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -116,7 +116,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"Encryption: {mobi.PalmDocHeader.EncryptionType} ({mobi.PalmDocHeader.EncryptionTypeName})");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task PalmDOCHeader_EncryptionIsNone_ForPublicDomain()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -130,7 +130,7 @@ public class HeaderTests : IAsyncLifetime
         Assert.Equal("None", mobi.PalmDocHeader.EncryptionTypeName);
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("frankenstein_mobi.mobi", PalmDOCHead.CompressionPalmDoc)]
     public async Task PalmDOCHeader_DetectsCorrectCompression(string filename, ushort expectedCompression)
     {
@@ -149,7 +149,7 @@ public class HeaderTests : IAsyncLifetime
 
     #region MOBI Header Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task MobiHeader_ReadsCoreProperties()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -173,7 +173,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"Unique ID: {mobi.MobiHeader.UniqueId}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task MobiHeader_Kf8File_HasVersion8()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -187,7 +187,7 @@ public class HeaderTests : IAsyncLifetime
         Assert.True(mobi.IsKf8);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task MobiHeader_OldMobiFile_HasVersion6()
     {
         var filePath = _downloader.GetFilePath("frankenstein_mobi.mobi");
@@ -201,7 +201,7 @@ public class HeaderTests : IAsyncLifetime
         Assert.False(mobi.IsKf8);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task MobiHeader_PublicDomain_HasNoDrm()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -222,7 +222,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"Has DRM: {mobi.MobiHeader.HasDrm}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task MobiHeader_HuffCdicProperties()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
@@ -242,7 +242,7 @@ public class HeaderTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task MobiHeader_ContentRecordIndices()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -261,7 +261,7 @@ public class HeaderTests : IAsyncLifetime
         Assert.True(mobi.MobiHeader.LastContentRecord >= mobi.MobiHeader.FirstContentRecord);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task MobiHeader_IndexFields_Exist()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -281,7 +281,7 @@ public class HeaderTests : IAsyncLifetime
 
     #region EXTH Header Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task ExthHeader_ReadsBasicMetadata()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -301,7 +301,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"Description: {Truncate(mobi.MobiHeader.ExthHeader.Description, 100)}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ExthHeader_ReadsBookIdentification()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -320,7 +320,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"CDE Type: {mobi.MobiHeader.ExthHeader.CDEType}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ExthHeader_ReadsCoverInfo()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
@@ -337,7 +337,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"Has Fake Cover: {mobi.MobiHeader.ExthHeader.HasFakeCover}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ExthHeader_ReadsCreatorInfo()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -356,7 +356,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"Creator Build String: {mobi.MobiHeader.ExthHeader.CreatorBuildString}");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ExthHeader_ReadsKf8SpecificFields()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -374,7 +374,7 @@ public class HeaderTests : IAsyncLifetime
         _output.WriteLine($"Orientation Lock: {mobi.MobiHeader.ExthHeader.OrientationLock}");
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("frankenstein_kf8.mobi")]
     [InlineData("alice_wonderland_kf8.mobi")]
     [InlineData("moby_dick_kf8.mobi")]

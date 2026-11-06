@@ -40,7 +40,7 @@ public class EdgeCaseTests : IAsyncLifetime
         Assert.Throws<ObjectDisposedException>(() => mobi.OpenImageStream(0));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task IDisposable_DisposedObject_ThrowsOnReadMetadata()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -53,7 +53,7 @@ public class EdgeCaseTests : IAsyncLifetime
         await Assert.ThrowsAsync<ObjectDisposedException>(() => mobi.ReadMetadataAsync(stream));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task IDisposable_DisposedObject_ThrowsOnLoadImages()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
@@ -78,7 +78,7 @@ public class EdgeCaseTests : IAsyncLifetime
         Assert.True(true);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task IDisposable_UsingPattern_Works()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -110,7 +110,7 @@ public class EdgeCaseTests : IAsyncLifetime
         Assert.Contains("ReadMetadataAsync", ex.Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task GetImageBytes_WithoutLoadImages_Throws()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -124,7 +124,7 @@ public class EdgeCaseTests : IAsyncLifetime
         Assert.Contains("LoadImagesAsync", ex.Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task OpenImageStream_WithoutLoadImages_Throws()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -139,28 +139,19 @@ public class EdgeCaseTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RequireExthHeader_WithNoExth_Throws()
-    {
-        // Create a minimal MOBI without EXTH header
-        // For this test, we'll just verify the constructor works
-        var mobi = new MobiMetadata(requireExthHeader: true);
-        Assert.NotNull(mobi);
-    }
-
-    [Fact]
     public async Task InvalidStream_Throws()
     {
         var mobi = new MobiMetadata();
         var invalidStream = new MemoryStream([1, 2, 3, 4]); // Too small
 
-        await Assert.ThrowsAnyAsync<Exception>(() => mobi.ReadMetadataAsync(invalidStream));
+        await Assert.ThrowsAsync<MobiMetadataException>(() => mobi.ReadMetadataAsync(invalidStream));
     }
 
     #endregion
 
     #region DRM Detection Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task DRM_PublicDomainFiles_HaveNoDrm()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -173,7 +164,7 @@ public class EdgeCaseTests : IAsyncLifetime
         Assert.False(mobi.MobiHeader.HasDrm, "Public domain file should not have DRM");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task DRM_NoDrm_MeansHasDrmFalse()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -188,7 +179,7 @@ public class EdgeCaseTests : IAsyncLifetime
         Assert.False(mobi.MobiHeader.HasDrm);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task DRM_EncryptionNone_ForPublicDomain()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -206,10 +197,10 @@ public class EdgeCaseTests : IAsyncLifetime
 
     #region Boundary Tests
 
-    [Fact]
+    [SkippableFact]
     public async Task ImageIndex_AtBoundary()
     {
-        var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
+        var filePath = _downloader.GetFilePath("jane_eyre_kf8.mobi");
         if (!File.Exists(filePath)) throw new Xunit.SkipException("Test file not downloaded");
 
         await using var stream = File.OpenRead(filePath);
@@ -229,7 +220,7 @@ public class EdgeCaseTests : IAsyncLifetime
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => mobi.GetImageBytesAsync(count));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task PageCount_MatchesImageCount()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
@@ -289,7 +280,7 @@ public class EdgeCaseTests : IAsyncLifetime
         Assert.Equal(17480, PalmDOCHead.CompressionHuffCdic);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task CompressionName_UsesConstants()
     {
         var filePath = _downloader.GetFilePath("frankenstein_mobi.mobi");
@@ -307,7 +298,7 @@ public class EdgeCaseTests : IAsyncLifetime
 
     #region Theory Tests
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("frankenstein_kf8.mobi")]
     [InlineData("alice_wonderland_kf8.mobi")]
     [InlineData("moby_dick_kf8.mobi")]
@@ -323,7 +314,7 @@ public class EdgeCaseTests : IAsyncLifetime
         Assert.False(mobi.MobiHeader.HasDrm, $"{filename} should not have DRM");
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("frankenstein_kf8.mobi")]
     [InlineData("frankenstein_mobi.mobi")]
     [InlineData("frankenstein_kindle_images.mobi")]

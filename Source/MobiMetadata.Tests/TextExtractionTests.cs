@@ -31,7 +31,7 @@ public class TextExtractionTests : IAsyncLifetime
 
     #region Basic Text Extraction
 
-    [Fact]
+    [SkippableFact]
     public async Task ExtractText_Kf8File_ReturnsContent()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -52,7 +52,7 @@ public class TextExtractionTests : IAsyncLifetime
         _output.WriteLine($"First 200 chars: {text[..Math.Min(200, text.Length)]}...");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ExtractText_OldMobiFile_ReturnsContent()
     {
         var filePath = _downloader.GetFilePath("frankenstein_mobi.mobi");
@@ -72,7 +72,7 @@ public class TextExtractionTests : IAsyncLifetime
         _output.WriteLine($"Extracted text length: {text.Length:N0} characters");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ExtractText_HuffCdicFile_ReturnsContent()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kindle_images.mobi");
@@ -96,7 +96,7 @@ public class TextExtractionTests : IAsyncLifetime
 
     #region Text Content Properties
 
-    [Fact]
+    [SkippableFact]
     public async Task TextContent_HasCorrectEncoding()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -115,7 +115,7 @@ public class TextExtractionTests : IAsyncLifetime
         _output.WriteLine($"Text Encoding: {mobi.MobiHeader.TextEncoding} ({mobi.MobiHeader.TextEncodingName})");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task TextContent_TextLengthMatches()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -132,16 +132,17 @@ public class TextExtractionTests : IAsyncLifetime
 
         var text = await mobi.TextContent.ExtractTextAsync();
 
-        // Extracted text should be close to header length (may differ due to encoding)
         _output.WriteLine($"Header Text Length: {mobi.TextContent.TextLength:N0}");
         _output.WriteLine($"Extracted Text Length: {text.Length:N0}");
+
+        Assert.Equal((long)mobi.TextContent.TextLength, System.Text.Encoding.UTF8.GetByteCount(text));
     }
 
     #endregion
 
     #region KF8 Parser
 
-    [Fact]
+    [SkippableFact]
     public async Task Kf8Parser_IsCreatedForKf8Files()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -155,7 +156,7 @@ public class TextExtractionTests : IAsyncLifetime
         Assert.NotNull(mobi.Kf8Parser);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Kf8Parser_IsNullForNonKf8Files()
     {
         // Find a pure old MOBI file (version 6, not dual)
@@ -190,7 +191,7 @@ public class TextExtractionTests : IAsyncLifetime
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Kf8Parser_ParseAsync_ParsesStructures()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -200,11 +201,8 @@ public class TextExtractionTests : IAsyncLifetime
         var mobi = new MobiMetadata();
         await mobi.ReadMetadataAsync(stream);
 
-        if (mobi.Kf8Parser == null)
-        {
-            _output.WriteLine("Not a KF8 file, skipping");
-            return;
-        }
+        Assert.True(mobi.IsKf8);
+        Assert.NotNull(mobi.Kf8Parser);
 
         await mobi.ParseKf8Async();
 
@@ -215,13 +213,17 @@ public class TextExtractionTests : IAsyncLifetime
         _output.WriteLine($"Chunk Index: {mobi.Kf8Parser.Chunks?.Count ?? 0} entries");
         _output.WriteLine($"FDST Index: {mobi.Kf8Parser.Fdst?.Count ?? 0} entries");
         _output.WriteLine($"NCX Index: {mobi.Kf8Parser.Ncx?.Count ?? 0} entries");
+
+        Assert.NotEmpty(mobi.Kf8Parser.Skeletons!);
+        Assert.NotEmpty(mobi.Kf8Parser.Chunks!);
+        Assert.NotEmpty(mobi.Kf8Parser.Fdst!);
     }
 
     #endregion
 
     #region Navigation
 
-    [Fact]
+    [SkippableFact]
     public async Task Navigation_BuildsTableOfContents()
     {
         var filePath = _downloader.GetFilePath("frankenstein_kf8.mobi");
@@ -231,34 +233,27 @@ public class TextExtractionTests : IAsyncLifetime
         var mobi = new MobiMetadata();
         await mobi.ReadMetadataAsync(stream);
 
-        if (mobi.Kf8Parser != null)
+        Assert.NotNull(mobi.Kf8Parser);
+        await mobi.ParseKf8Async();
+        Assert.NotNull(mobi.Navigation);
+
+        var toc = mobi.Navigation.BuildHierarchicalToc();
+        _output.WriteLine($"TOC entries: {toc.Count}");
+
+        foreach (var entry in toc.Take(10))
         {
-            await mobi.ParseKf8Async();
+            _output.WriteLine($"  - {entry.Title} (Level {entry.Level})");
         }
 
-        if (mobi.Navigation != null)
-        {
-            var toc = mobi.Navigation.BuildHierarchicalToc();
-            _output.WriteLine($"TOC entries: {toc.Count}");
-
-            foreach (var entry in toc.Take(10))
-            {
-                _output.WriteLine($"  - {entry.Title} (Level {entry.Level})");
-            }
-
-            Assert.True(toc.Count >= 0);
-        }
-        else
-        {
-            _output.WriteLine("No navigation data available for this file");
-        }
+        Assert.NotEmpty(toc);
+        Assert.All(toc, entry => Assert.False(string.IsNullOrWhiteSpace(entry.Title)));
     }
 
     #endregion
 
     #region Theory Tests
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("frankenstein_kf8.mobi", "Frankenstein")]
     [InlineData("alice_wonderland_kf8.mobi", "Alice")]
     [InlineData("sherlock_holmes_kf8.mobi", "Sherlock")]
@@ -280,7 +275,7 @@ public class TextExtractionTests : IAsyncLifetime
         _output.WriteLine($"[{filename}] Text length: {text.Length:N0} chars");
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("frankenstein_kf8.mobi")]
     [InlineData("alice_wonderland_kf8.mobi")]
     [InlineData("sherlock_holmes_kf8.mobi")]
