@@ -19,6 +19,8 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - run: dotnet test Source/MobiMetadata.Tests/MobiMetadata.Tests.csproj -c Release --filter "FullyQualifiedName~RegressionTests|FullyQualifiedName~PageRecordBoundaryTests"
+
       - run: dotnet pack Source/MobiMetadata/MobiMetadata.csproj -c Release -o ./nupkg
 
       - name: NuGet login (OIDC)
